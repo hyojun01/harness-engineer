@@ -1,6 +1,6 @@
 # Harness Engineering Principles
 
-Consolidated from Anthropic's engineering blog, platform documentation, and community best practices (updated March 28, 2026).
+Consolidated from Anthropic's engineering blog, platform documentation, and community best practices (updated April 5, 2026).
 
 ## Foundational principle
 
@@ -61,9 +61,33 @@ Concrete example: Moving from Opus 4.5 to Opus 4.6 allowed Anthropic to:
 - Drop context resets in favor of automatic compaction
 - Move the evaluator to a single pass at the end rather than per-sprint grading
 
+In the March 2026 browser DAW experiment, Opus 4.6 ran for ~3 hours 50 minutes at $124.70 without the older sprint structure. The earlier retro game maker experiment with Opus 4.5 used the full sprint harness and ran 6 hours at $200.
+
+**Model-specific harness configurations:**
+
+| Model | Context anxiety | Recommended strategy | Sprint structure |
+|-------|----------------|---------------------|-----------------|
+| Sonnet 4.5 | Strong | Context resets required | Per-sprint evaluation |
+| Opus 4.5 | Mild | Compaction sufficient | Sprint-based, can simplify |
+| Opus 4.6 | Negligible | SDK auto-compaction | Continuous session, single evaluation pass |
+
 The evaluator's value depends on where the task sits relative to what the model can do reliably solo. For tasks within the model's baseline capability, the evaluator is unnecessary overhead. For tasks at the edge, it provides critical lift.
 
 **Rule:** After every model upgrade, audit each harness component. Ask: "Does the model now handle this on its own?" If yes, remove the component.
+
+### Claude Agent SDK orchestration
+
+Anthropic's three-agent architecture is built on the Claude Agent SDK. The SDK provides:
+- **Automatic compaction** — handles context growth transparently, eliminating manual context reset logic
+- **Agent loop management** — structured tool-use loops with built-in error recovery
+- **Multi-agent coordination** — programmatic spawning and communication between agents via files
+- **Session persistence** — state transfer between sessions without custom serialization
+
+When building harnesses programmatically (outside Claude Code's `.claude/` directory structure), use the Claude Agent SDK for orchestration. The SDK handles the plumbing (compaction, tool routing, permission enforcement) while the harness defines the behavior (agent prompts, evaluation criteria, task decomposition).
+
+**When to use `.claude/` structure vs. SDK:**
+- `.claude/` structure: Interactive Claude Code sessions, team workflows, plugin distribution
+- Claude Agent SDK: Programmatic pipelines, CI/CD integration, custom multi-agent systems, production deployments
 
 ## Session continuity
 
@@ -138,25 +162,49 @@ Hooks are event-driven automation scripts that execute at specific points in Cla
 - **Hooks:** Hard requirements that must happen every time — formatting, linting, security scanning, permission enforcement.
 - **CLAUDE.md:** Guidance that Claude should consider — coding style, architectural preferences, workflow suggestions.
 
-### Hook events
-- `PreToolUse` — Before any tool runs. Can approve, deny, or modify tool calls.
-- `PostToolUse` — After tool completes. Good for formatting, logging, notifications.
-- `Stop` — When agent finishes. Good for cleanup, final validation.
-- `SessionStart` — When session begins. Good for environment setup.
-- `SessionEnd` — When session ends. Good for cleanup.
-- `UserPromptSubmit` — Before processing user input. Good for input validation.
+### Hook events (14 events as of April 2026)
+
+**Session lifecycle:**
+- `SessionStart` — When session begins. Good for environment setup, context priming.
+- `SessionEnd` — When session ends. Good for cleanup, saving state.
+
+**User input:**
+- `UserPromptSubmit` — Before processing user input. Good for input validation, routing.
+
+**Permission:**
+- `PermissionRequest` — When a permission decision is needed. Can auto-approve or deny.
+- `PermissionDenied` — After auto mode classifier denials. Return `{retry: true}` to let the model retry.
+
+**Tool lifecycle:**
+- `PreToolUse` — Before any tool runs. Can approve, deny, defer, or modify tool calls. Highest-priority control mechanism in the stack. Supports "defer" for headless sessions (pause and resume later with `-p --resume`).
+- `PostToolUse` — After tool completes successfully. Good for formatting, logging, notifications.
+- `PostToolUseFailure` — After a tool call fails. Good for error recovery, fallback strategies.
+
+**Agent lifecycle:**
+- `SubagentStart` — When a subagent spawns. Good for logging, resource allocation.
+- `SubagentStop` — When a subagent finishes. Good for cleanup, result validation.
+- `Stop` — When the main agent finishes. Good for final validation, cleanup.
+
+**Task and team:**
+- `TaskCompleted` — When a task is marked complete. Blocking — can trigger follow-up actions.
+- `TeammateIdle` — When an agent team member becomes idle. Good for reassigning work.
+
+**Context management:**
 - `PreCompact` — Before compaction. Good for injecting reminders that must survive compaction.
-- `Notification` — For injecting context after events like compaction.
+- `Notification` — For injecting context after events like compaction or other system events.
 
 ### Hook types
-- **Command hooks:** Execute shell scripts. Best for local validation and formatting.
+- **Command hooks:** Execute shell scripts. Best for local validation and formatting. Claude Code passes hook input as JSON via stdin.
 - **HTTP hooks:** Call external services. Best for CI/CD integration, external APIs.
-- **Prompt hooks:** Modify Claude's behavior without external processes.
+- **Prompt hooks:** Modify Claude's behavior without external processes. Best for context injection and reminders.
 
 ### Hook exit codes
 - `0` — Allow the action
 - `1` — Block the action
 - `2` — Prompt Claude to reconsider
+
+### Hook priority
+PreToolUse hooks override the permission system entirely — they are the highest-priority control mechanism. A PreToolUse hook returning deny will block a tool call even if permissions explicitly allow it.
 
 ## Plugins: shareable harness packages
 
@@ -190,6 +238,9 @@ plugin-name/
 - Use `${CLAUDE_PLUGIN_ROOT}` to reference files within the plugin
 - `/reload-plugins` picks up changes without restarting
 - Local `--plugin-dir` overrides installed marketplace plugins for testing
+- **Security constraint:** Plugin subagents do NOT support `hooks`, `mcpServers`, or `permissionMode` frontmatter fields. This is a deliberate security restriction — plugins from third parties cannot modify permission enforcement or inject hooks.
+- **Managed subagents** (deployed by organization admins) take precedence over project and user subagents with the same name. Place them in `.claude/agents/` inside the managed settings directory.
+- Plugin marketplaces are git repos with a `marketplace.json` file. The official marketplace is available by default at `claude.ai/settings/plugins/submit`.
 
 ## Agent teams: parallel multi-agent coordination
 
@@ -208,9 +259,12 @@ Agent teams coordinate multiple Claude Code instances working simultaneously. On
 ### Practical guidelines
 - 2-3 focused teammates consistently outperform larger teams
 - Beyond 4-5 active agents, coordination overhead exceeds productivity gains
-- Agent teams use ~3-4x the tokens of a single session for equivalent work
+- Agent teams use ~7x the tokens of a single session in plan mode (Anthropic's cost documentation)
 - File system serves as the primary coordination mechanism
 - Git synchronization prevents two agents from working on the same task
+- **Delegate mode** (Shift+Tab): Restricts the lead agent's tools to spawning teammates, sending messages, managing task list, and shutting down teammates. Prevents the lead from implementing tasks itself. This is the correct mode for team coordination.
+- Known limitations: No session resumption for in-process teammates, one team per session, no nested teams.
+- Communication via inbox-based messaging system — teammates are peers, not hierarchical workers.
 
 ### Enabling agent teams
 ```bash

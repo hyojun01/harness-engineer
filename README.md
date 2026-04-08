@@ -1,6 +1,6 @@
 # harness-engineer
 
-A Claude Code skill for designing and generating production-ready agent harnesses. Give it a task description and it produces a complete `.claude/` directory with all necessary files — CLAUDE.md, subagents, skills, commands, rules, hooks, plugin manifests, and progress tracking — following Anthropic's harness engineering best practices.
+A Claude Code skill for designing and generating production-ready agent harnesses. Give it a task description and it produces a complete `.claude/` directory with all necessary files — CLAUDE.md, subagents, skills, commands, rules, hooks, plugin manifests, and progress tracking — following Anthropic's harness engineering best practices (updated April 2026).
 
 ## Quick start
 
@@ -34,21 +34,27 @@ python3 scripts/scaffold.py research-agent ./output \
   --commands research \
   --rules citations
 
-# Code pipeline with evaluator
+# Code pipeline with evaluator (Opus model, project-scoped memory)
 python3 scripts/scaffold.py code-pipeline ./output \
   --agents implementer \
   --evaluator \
   --hooks \
-  --rules code-style,testing
+  --rules code-style,testing \
+  --model opus --memory project
 
 # Reusable plugin
 python3 scripts/scaffold.py team-tools ./output \
   --plugin \
   --skills code-review \
   --hooks
+
+# Parallel debugging with agent teams
+python3 scripts/scaffold.py parallel-debug ./output \
+  --agents hypothesis-a,hypothesis-b \
+  --teams --model sonnet
 ```
 
-Run `python3 scripts/scaffold.py --help` for all options.
+Run `python3 scripts/scaffold.py --help` for all options. Additional flags: `--model` (sonnet/opus/haiku), `--memory` (user/project/none), `--background`, `--teams`.
 
 ## What's inside
 
@@ -68,9 +74,9 @@ harness-engineer/
 
 | File | What it covers |
 |------|---------------|
-| `harness-principles.md` | The agent loop, harness evolution stages (single → two-agent → GAN-inspired three-agent), session continuity, verification loops, tool design, hooks, and the architecture decision framework |
-| `context-engineering.md` | Context rot, attention budgets, progressive disclosure, CLAUDE.md design rules, skill/subagent context design, and 13 anti-patterns to avoid |
-| `file-templates.md` | Copy-paste templates for CLAUDE.md, settings.json, subagents, evaluators, skills, commands, rules, hooks, plugins, progress tracking, and feature lists |
+| `harness-principles.md` | The agent loop, harness evolution stages (single → two-agent → GAN-inspired three-agent), model-specific harness configurations, Claude Agent SDK orchestration, session continuity, verification loops, tool design, all 14 hook events, agent teams with delegate mode, plugins, and the architecture decision framework |
+| `context-engineering.md` | Context rot, attention budgets, progressive disclosure, CLAUDE.md design rules, skill/subagent context design, model-specific compaction strategies, SDK auto-compaction, and 18 anti-patterns to avoid |
+| `file-templates.md` | Copy-paste templates for CLAUDE.md, settings.json, subagents (with full 16-field frontmatter reference), evaluators, skills, commands, rules, hooks (all 14 events), plugins, progress tracking, and feature lists |
 | `examples.md` | Four complete examples — a simple code reviewer, a two-agent content pipeline, a four-agent development harness, and a reusable research plugin |
 
 ## Key concepts
@@ -94,6 +100,8 @@ Stage 1: Single agent + CLAUDE.md
 | CLAUDE.md | ~80% | Guidance, conventions, workflow advice |
 | Rules | ~80%, scoped to file patterns | File-type-specific constraints |
 | Hooks | 100% (deterministic) | Linting, security checks, formatting |
+
+**Model-specific strategies:** Harness complexity should match the model. Sonnet 4.5 needs context resets and per-sprint evaluation. Opus 4.5 can rely on compaction. Opus 4.6 supports continuous multi-hour sessions with SDK auto-compaction.
 
 ## Requirements
 

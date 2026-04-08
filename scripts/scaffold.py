@@ -13,11 +13,16 @@ Options:
     --hooks                 Add hooks template to settings.json
     --evaluator             Add an evaluator agent for independent QA
     --plugin                Package as a plugin (adds manifest)
+    --model MODEL           Default model for agents (sonnet/opus/haiku, default: sonnet)
+    --memory SCOPE          Enable persistent memory (user/project/none, default: none)
+    --background            Enable background execution for agents
+    --teams                 Add agent teams configuration
 
 Examples:
     python3 scaffold.py research-agent ./output --agents planner,researcher,writer --skills deep-research --commands research --rules citations
-    python3 scaffold.py code-pipeline ./output --agents implementer --evaluator --hooks --rules code-style,testing
+    python3 scaffold.py code-pipeline ./output --agents implementer --evaluator --hooks --rules code-style,testing --model opus --memory project
     python3 scaffold.py team-tools ./output --plugin --skills code-review --hooks
+    python3 scaffold.py parallel-debug ./output --agents hypothesis-a,hypothesis-b --teams --model sonnet
 """
 
 import argparse
@@ -126,6 +131,17 @@ Update `progress.json` after each completed task. Use subagents to isolate long 
 
     if args.hooks and not args.plugin:
         settings["hooks"] = {
+            "PreToolUse": [
+                {
+                    "matcher": "Bash(rm *)",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "echo 'Destructive operation blocked' && exit 1"
+                        }
+                    ]
+                }
+            ],
             "PostToolUse": [
                 {
                     "matcher": "Edit|Write",
@@ -133,6 +149,28 @@ Update `progress.json` after each completed task. Use subagents to isolate long 
                         {
                             "type": "command",
                             "command": "echo 'File modified: $FILE'"
+                        }
+                    ]
+                }
+            ],
+            "PostToolUseFailure": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [
+                        {
+                            "type": "prompt",
+                            "prompt": "The previous command failed. Check the error and try a different approach."
+                        }
+                    ]
+                }
+            ],
+            "PreCompact": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "prompt",
+                            "prompt": "Before compaction: save critical decisions and current task state to progress.json."
                         }
                     ]
                 }
@@ -195,14 +233,40 @@ exit 0
             "updated_at": ""
         }, indent=2))
 
+    # Agent teams configuration (standard harness only)
+    if args.teams and not args.plugin:
+        # Add agent teams env var to settings
+        if "env" not in settings:
+            settings["env"] = {}
+        settings["env"]["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"] = "1"
+        # Rewrite settings.json with the env var
+        write_file(os.path.join(base, ".claude", "settings.json"), json.dumps(settings, indent=2))
+        # Add a teams guide to CLAUDE.md context management section
+        claude_md_path = os.path.join(base, "CLAUDE.md")
+        if os.path.exists(claude_md_path):
+            with open(claude_md_path, "r") as f:
+                content = f.read()
+            content += """
+## Agent teams
+
+Agent teams are enabled. Use Shift+Tab (Delegate mode) to restrict the lead agent to coordination only.
+- 2-3 focused teammates outperform larger teams
+- Each teammate works in its own context window
+- Communication via inbox-based messaging
+- Use teams when tasks have clear file boundaries for parallel work
+"""
+            write_file(claude_md_path, content)
+
     # Agent stubs
     if args.agents:
         for agent in args.agents:
+            memory_line = f"\nmemory: {args.memory}" if args.memory and args.memory != "none" else ""
+            background_line = "\nbackground: true" if args.background else ""
             write_file(os.path.join(component_path("agents"), f"{agent}.md"), f"""---
 name: {agent}
 description: {{When this agent should be invoked. Include specific trigger phrases.}}
 tools: Read, Write, Grep, Glob
-model: sonnet
+model: {args.model}{memory_line}{background_line}
 ---
 
 You are a {agent.replace('-', ' ')} specialist.
@@ -225,11 +289,11 @@ You are a {agent.replace('-', ' ')} specialist.
 
     # Evaluator agent
     if args.evaluator:
-        write_file(os.path.join(component_path("agents"), "evaluator.md"), """---
+        write_file(os.path.join(component_path("agents"), "evaluator.md"), f"""---
 name: evaluator
 description: Independently test and grade completed work by interacting with the running output. Invoke after a feature is implemented, or when QA, evaluation, or testing is needed.
 tools: Read, Grep, Glob, Bash
-model: opus
+model: {args.model if args.model == 'opus' else 'opus'}
 ---
 
 You are an independent QA specialist. Test the running application as a real user would.
@@ -353,16 +417,22 @@ globs: ["{{pattern}}"]
         "hooks": "yes" if args.hooks else "no",
         "evaluator": "yes" if args.evaluator else "no",
         "plugin": "yes" if args.plugin else "no",
+        "model": args.model,
+        "memory": args.memory,
+        "teams": "yes" if args.teams else "no",
     }
 
     print(f"Scaffolded: {base}")
     print(f"  Type:      {'Plugin' if args.plugin else 'Standard harness'}")
+    print(f"  Model:     {components['model']}")
     print(f"  Agents:    {components['agents']}")
     print(f"  Skills:    {components['skills']}")
     print(f"  Commands:  {components['commands']}")
     print(f"  Rules:     {components['rules']}")
     print(f"  Hooks:     {components['hooks']}")
     print(f"  Evaluator: {components['evaluator']}")
+    print(f"  Memory:    {components['memory']}")
+    print(f"  Teams:     {components['teams']}")
     print(f"\nNext: Fill in the {{placeholder}} values in each file.")
 
 
@@ -377,6 +447,12 @@ def main():
     parser.add_argument("--hooks", help="Add hooks template", action="store_true")
     parser.add_argument("--evaluator", help="Add evaluator agent for independent QA", action="store_true")
     parser.add_argument("--plugin", help="Package as a plugin", action="store_true")
+    parser.add_argument("--model", help="Default model for agents (sonnet/opus/haiku/opusplan)", default="sonnet",
+                        choices=["sonnet", "opus", "haiku", "opusplan"])
+    parser.add_argument("--memory", help="Persistent memory scope (user/project/none)", default="none",
+                        choices=["user", "project", "none"])
+    parser.add_argument("--background", help="Enable background execution for agents", action="store_true")
+    parser.add_argument("--teams", help="Add agent teams configuration", action="store_true")
     args = parser.parse_args()
 
     # Parse comma-separated lists

@@ -76,7 +76,7 @@ Add tool-specific permissions based on the task:
 name: {agent-name}
 description: {When this agent should be invoked. Be specific about trigger conditions. Include exact phrases users or the orchestrator might use.}
 tools: {Comma-separated list: Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch}
-model: {sonnet or opus. Use sonnet for most tasks; opus for complex synthesis/writing.}
+model: {sonnet or opus or haiku. Use sonnet for most tasks; opus for complex synthesis/writing; haiku for fast exploration.}
 ---
 
 You are a {role description} specialist. Your job is to {primary objective}.
@@ -102,7 +102,52 @@ You are a {role description} specialist. Your job is to {primary objective}.
 - {Keep to 3-7 rules}
 ```
 
-**Checklist:** Tools follow least privilege? Description includes trigger phrases? Output format is explicit?
+### All supported frontmatter fields (April 2026)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Identifier for the subagent (kebab-case) |
+| `description` | string | When to invoke this agent. Be pushy with trigger phrases. |
+| `tools` | list | Comma-separated tool names. Use least privilege. |
+| `disallowedTools` | list | Explicitly deny specific tools (alternative to allowlist). |
+| `model` | string | `sonnet`, `opus`, `haiku`, or `opusplan` (Opus planning + Sonnet execution). |
+| `permissionMode` | string | Permission mode for the subagent session. Not supported in plugin subagents. |
+| `mcpServers` | object | MCP server configurations scoped to this subagent. Not supported in plugin subagents. |
+| `hooks` | object | Hook definitions that only run while this subagent is active. Cleaned up when it finishes. Not supported in plugin subagents. All hook events are supported. |
+| `maxTurns` | integer | Maximum number of tool-use turns before the subagent stops. |
+| `skills` | list | Skills to preload into the subagent's context. |
+| `initialPrompt` | string | First message sent to the subagent when it starts. |
+| `memory` | string | Scope for persistent memory directory. `user` = `~/.claude/agent-memory/`, `project` = project-level. Accumulates insights across conversations. |
+| `effort` | string | Reasoning depth: `low`, `medium`, `high`. Controls adaptive thinking. |
+| `background` | boolean | Run the subagent in background mode. |
+| `isolation` | string | Worktree isolation level for safe parallel work. |
+| `color` | string | Background color for UI identification of the subagent. |
+| `prompt` | string | System prompt (used in CLI `--agents` JSON flag, equivalent to the markdown body). |
+
+### Security constraints for plugin subagents
+Plugin subagents do NOT support `hooks`, `mcpServers`, or `permissionMode`. This prevents third-party plugins from modifying permission enforcement or injecting hooks.
+
+### Subagent with hooks example
+
+```markdown
+---
+name: db-reader
+description: Execute read-only database queries safely.
+tools: Bash
+hooks:
+  PreToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: "./scripts/validate-readonly-query.sh"
+---
+
+You are a database query specialist. Only execute SELECT queries.
+```
+
+The PreToolUse hook validates that every Bash command is a read-only query before execution. Claude Code passes hook input as JSON via stdin to hook commands.
+
+**Checklist:** Tools follow least privilege? Description includes trigger phrases? Output format is explicit? Hooks enforce hard constraints? Memory scope chosen intentionally?
 
 ---
 
@@ -324,6 +369,50 @@ Common glob patterns:
         ]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "The previous command failed. Check the error output and try a different approach."
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/log-denied-action.sh"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/validate-subagent-output.sh"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Before compaction: save all critical decisions and current task state to progress.json."
+          }
+        ]
+      }
+    ],
     "Notification": [
       {
         "matcher": "",
@@ -338,6 +427,26 @@ Common glob patterns:
   }
 }
 ```
+
+### All hook events reference (April 2026)
+
+| Event | When it fires | Common use |
+|-------|--------------|------------|
+| `SessionStart` | Session begins | Environment setup, context priming |
+| `SessionEnd` | Session ends | Cleanup, state saving |
+| `UserPromptSubmit` | Before processing user input | Input validation, routing |
+| `PermissionRequest` | Permission decision needed | Auto-approve/deny |
+| `PermissionDenied` | After auto mode classifier denial | Return `{retry: true}` to allow retry |
+| `PreToolUse` | Before tool runs | Validate, deny, defer, or modify. Highest priority. |
+| `PostToolUse` | After tool succeeds | Formatting, logging, notifications |
+| `PostToolUseFailure` | After tool fails | Error recovery, fallback |
+| `SubagentStart` | Subagent spawns | Logging, resource allocation |
+| `SubagentStop` | Subagent finishes | Cleanup, result validation |
+| `Stop` | Main agent finishes | Final validation, cleanup |
+| `TaskCompleted` | Task marked complete | Follow-up actions (blocking) |
+| `TeammateIdle` | Agent team member idle | Work reassignment |
+| `PreCompact` | Before compaction | Inject must-survive reminders |
+| `Notification` | After system events | Context injection post-compaction |
 
 ### Hooks in plugin format (hooks/hooks.json)
 

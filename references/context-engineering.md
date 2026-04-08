@@ -1,6 +1,6 @@
 # Context Engineering Best Practices
 
-Updated March 2026 from Anthropic's "Effective context engineering for AI agents" blog and related documentation.
+Updated April 2026 from Anthropic's "Effective context engineering for AI agents" blog (Sep 2025), "Harness design for long-running application development" (Mar 2026), and related documentation.
 
 Context engineering is the set of strategies for curating and maintaining the optimal set of tokens during LLM inference. It is the natural progression of prompt engineering: while prompt engineering focuses on how to write effective prompts, context engineering addresses the broader question of what configuration of context is most likely to generate the desired behavior.
 
@@ -164,6 +164,18 @@ Summarize conversation contents and reinitiate with the summary. The art lies in
 - Preserve: architectural decisions, unresolved bugs, implementation details
 - Discard: redundant tool outputs, verbose logs, resolved issues
 
+### Claude Agent SDK auto-compaction
+The Claude Agent SDK handles compaction automatically for SDK-based harnesses. It monitors token usage and compacts when approaching limits. Note: autocompact includes a thrash loop detector — if context refills to the limit immediately after compacting three times in a row, it stops with an actionable error.
+
+### Compaction vs. context reset (model-specific)
+
+**Context anxiety** varies by model:
+- **Sonnet 4.5:** Strong context anxiety. Compaction alone NOT sufficient → context resets essential.
+- **Opus 4.5:** Mild context anxiety. Compaction sufficient → context resets can be dropped.
+- **Opus 4.6:** Negligible context anxiety. SDK auto-compaction handles everything → 2+ hour continuous sessions possible.
+
+Choose compaction strategy based on the target model.
+
 ### Structured note-taking (agentic memory)
 The agent regularly writes notes persisted outside the context window (to-do lists, NOTES.md, progress files). These get pulled back into context at later times.
 
@@ -244,3 +256,7 @@ Anthropic's experiments found models treat JSON as code and modify it more caref
 12. **Never auditing the harness** — Components encode model assumptions that go stale; re-test after model upgrades
 13. **Self-evaluation without separation** — Models praise their own work; separate generator from evaluator for quality-critical tasks
 14. **Compaction without testing** — Overly aggressive compaction loses subtle but critical context; tune carefully on complex agent traces
+15. **Using hooks/mcpServers/permissionMode in plugin subagents** — Not supported; will fail silently or error
+16. **Hardcoding model-specific harness behavior** — Context resets needed for Sonnet 4.5 are unnecessary overhead on Opus 4.6; document which model the harness targets
+17. **Agent teams without delegate mode** — The lead agent will implement tasks itself instead of delegating; use Shift+Tab to restrict the lead's tools
+18. **Ignoring subagent memory scope** — Without persistent memory, subagents lose insights across conversations; set memory scope intentionally
