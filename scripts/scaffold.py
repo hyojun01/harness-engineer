@@ -14,7 +14,7 @@ Options:
     --evaluator             Add an evaluator agent for independent QA
     --plugin                Package as a plugin (adds manifest)
     --model MODEL           Default model for agents (sonnet/opus/haiku, default: sonnet)
-    --memory SCOPE          Enable persistent memory (user/project/none, default: none)
+    --memory SCOPE          Enable persistent memory (user/project/local/none, default: none)
     --background            Enable background execution for agents
     --teams                 Add agent teams configuration
 
@@ -130,14 +130,17 @@ Update `progress.json` after each completed task. Use subagents to isolate long 
     }
 
     if args.hooks and not args.plugin:
+        # Hook exit codes: 0 = allow, 1 = warn (not blocked), 2 = block
+        # matcher targets tool names; finer filtering done inside the script
+        # Hook commands receive input as JSON via stdin (not $FILE env var)
         settings["hooks"] = {
             "PreToolUse": [
                 {
-                    "matcher": "Bash(rm *)",
+                    "matcher": "Bash",
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "echo 'Destructive operation blocked' && exit 1"
+                            "command": "input=$(cat); cmd=$(echo \"$input\" | jq -r '.tool_input.command // empty'); if echo \"$cmd\" | grep -qE '^rm\\s+-rf'; then echo 'Destructive rm -rf blocked' >&2; exit 2; fi; exit 0"
                         }
                     ]
                 }
@@ -148,7 +151,7 @@ Update `progress.json` after each completed task. Use subagents to isolate long 
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "echo 'File modified: $FILE'"
+                            "command": "input=$(cat); file=$(echo \"$input\" | jq -r '.tool_input.file_path // empty'); if [ -n \"$file\" ]; then echo \"File modified: $file\"; fi"
                         }
                     ]
                 }
@@ -212,9 +215,11 @@ Update `progress.json` after each completed task. Use subagents to isolate long 
         create_dir(os.path.join(base, "scripts"))
         write_file(os.path.join(base, "scripts", "validate.sh"), """#!/bin/bash
 # Validation hook - customize this script
-# Exit 0 = allow, Exit 1 = block, Exit 2 = ask Claude to reconsider
+# Hook input is received as JSON via stdin
+# Exit 0 = allow, Exit 1 = warn (not blocked), Exit 2 = block
 input=$(cat)
-echo "Validating: $FILE"
+file=$(echo "$input" | jq -r '.tool_input.file_path // empty')
+echo "Validating: $file"
 exit 0
 """)
 
@@ -449,8 +454,8 @@ def main():
     parser.add_argument("--plugin", help="Package as a plugin", action="store_true")
     parser.add_argument("--model", help="Default model for agents (sonnet/opus/haiku/opusplan)", default="sonnet",
                         choices=["sonnet", "opus", "haiku", "opusplan"])
-    parser.add_argument("--memory", help="Persistent memory scope (user/project/none)", default="none",
-                        choices=["user", "project", "none"])
+    parser.add_argument("--memory", help="Persistent memory scope (user/project/local/none)", default="none",
+                        choices=["user", "project", "local", "none"])
     parser.add_argument("--background", help="Enable background execution for agents", action="store_true")
     parser.add_argument("--teams", help="Add agent teams configuration", action="store_true")
     args = parser.parse_args()

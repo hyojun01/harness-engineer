@@ -7,6 +7,8 @@ description: Design and generate complete Harness structures for Claude Code age
 
 Design and generate production-ready Harness structures for Claude Code agents.
 
+> **About this skill:** This skill combines **Anthropic's official documentation**, the author's **interpretation** of Anthropic patterns, and **scaffold examples** that demonstrate these patterns in practice. Each reference file marks which content is official and which is interpretation. When in doubt, defer to the official Claude Code documentation.
+
 ## What this skill does
 
 Take a user's task description and produce a complete `.claude/` directory structure with all necessary files: `CLAUDE.md`, subagents, skills, commands, rules, hooks, plugin manifests, settings, and progress tracking. Every output follows Anthropic's published best practices for harness engineering and context engineering (updated April 2026).
@@ -27,13 +29,13 @@ Take a user's task description and produce a complete `.claude/` directory struc
    - What skills should be bundled? What references and scripts do they need?
    - What slash commands serve as entry points?
    - What rules apply to which file patterns?
-   - What hooks enforce deterministic constraints? (Choose from all 14+ hook events)
+   - What hooks enforce deterministic constraints? (Choose from the full set of hook events — see `references/file-templates.md` for the event table)
    - Should this be packaged as a plugin for sharing? (Note: plugin subagents cannot use hooks, mcpServers, or permissionMode)
    - Does the task warrant agent teams for parallel work? (Consider delegate mode and token cost ~7x)
    - What format should progress tracking use?
    - Is Claude Agent SDK-based orchestration more appropriate than `.claude/` structure?
 
-4. **Generate all files** — Create every file with proper content. Use the templates from `references/file-templates.md` as starting points, then customize for the specific task.
+4. **Generate all files** — Create every file with proper content. Use the templates from `references/file-templates.md` as starting points, then customize for the specific task. Ensure all hook scripts read input from **stdin as JSON** (not environment variables).
 
 5. **Package and deliver** — Organize into a clean directory, create a ZIP, and present to the user with an architecture diagram and usage instructions.
 
@@ -44,7 +46,7 @@ Read `references/harness-principles.md` for the full decision framework. Key rul
 - Start with the simplest possible structure. Single agent with rich context beats multi-agent complexity.
 - Every component encodes an assumption about what the model cannot do alone. Stress-test those assumptions as models improve.
 - Add subagents only when context isolation or tool restriction is genuinely needed.
-- Add an evaluator agent when self-evaluation fails (subjective tasks, complex QA).
+- Add an evaluator agent when self-evaluation fails (subjective tasks, complex QA). The planner / generator / evaluator pattern is a recommended approach, not a mandatory structure.
 - Every file in CLAUDE.md must pass the test: "Would Claude make a mistake without this line?"
 - Skills over system prompt. Move specialized knowledge to skills so it loads on demand.
 - Rules over CLAUDE.md. Move file-specific constraints to glob-scoped rules.
@@ -71,16 +73,20 @@ Scale up from there based on task complexity. Read `references/file-templates.md
 
 1. CLAUDE.md is under 200 lines and every line would prevent a mistake if removed
 2. All skill descriptions are "pushy" — they list specific trigger phrases
-3. Subagent tool access follows least privilege (read-only agents get read-only tools)
-4. Subagent frontmatter uses only supported fields (name, description, tools, disallowedTools, model, permissionMode, mcpServers, hooks, maxTurns, skills, initialPrompt, memory, effort, background, isolation, color)
-5. Rules use glob patterns that match the correct directories
-6. No duplicate instructions across CLAUDE.md, skills, and rules
-7. Progress tracking file uses JSON, not Markdown
-8. Working directories exist with .gitkeep files
-9. Hooks enforce hard requirements (linting, security, formatting) that CLAUDE.md cannot guarantee
-10. Hooks use appropriate events from the full set of 14+ events (not just PreToolUse/PostToolUse)
-11. If packaged as plugin: manifest is valid, skills are namespaced, hooks use `${CLAUDE_PLUGIN_ROOT}`, subagents do NOT use hooks/mcpServers/permissionMode
-12. An architecture diagram or README explains the structure
-13. The harness follows the principle: "find the simplest solution possible"
-14. The harness has been stress-tested: would removing any component cause failures? Would the current model handle any component's job without it?
-15. Model-specific considerations documented: does this harness assume context resets (Sonnet 4.5) or auto-compaction (Opus 4.5+)?
+3. Skill SKILL.md files are under 500 lines; detailed knowledge is in references/
+4. Subagent tool access follows least privilege (read-only agents get read-only tools)
+5. Subagent frontmatter uses only supported fields (name, description, tools, disallowedTools, model, permissionMode, mcpServers, hooks, maxTurns, skills, initialPrompt, memory, effort, background, isolation, color)
+6. Subagent `memory` scope is chosen intentionally (`user`, `project`, or `local`)
+7. Rules use glob patterns that match the correct directories
+8. No duplicate instructions across CLAUDE.md, skills, and rules
+9. Progress tracking file uses JSON, not Markdown
+10. Working directories exist with .gitkeep files
+11. Hooks enforce hard requirements (linting, security, formatting) that CLAUDE.md cannot guarantee
+12. Hook exit codes are correct: 0 = allow, 1 = warning (not blocked), 2 = block
+13. Hook scripts read input from **stdin as JSON** (not `$FILE` environment variables)
+14. Hook `matcher` targets tool names (e.g., `"Bash"`, `"Write"`); finer filtering is done inside the script
+15. If packaged as plugin: manifest is valid, skills are namespaced, hooks use `${CLAUDE_PLUGIN_ROOT}`, subagents do NOT use hooks/mcpServers/permissionMode
+16. An architecture diagram or README explains the structure
+17. The harness follows the principle: "find the simplest solution possible"
+18. The harness has been stress-tested: would removing any component cause failures? Would the current model handle any component's job without it?
+19. Model-specific considerations documented: does this harness assume context resets (Sonnet 4.5) or auto-compaction (Opus 4.6)?

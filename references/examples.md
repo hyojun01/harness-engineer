@@ -2,6 +2,10 @@
 
 Complete worked examples showing different complexity levels and patterns.
 
+> **Legend:** Examples marked ✅ are minimal working examples safe to copy directly. Examples marked 📐 are conceptual pseudocode illustrating a pattern — adapt before use.
+
+---
+
 ## Example 1: Simple — Code review agent
 
 A single-agent harness with no subagents. Just CLAUDE.md + rules + one command.
@@ -25,7 +29,7 @@ code-reviewer/
 └── output/
 ```
 
-### CLAUDE.md (48 lines)
+### ✅ CLAUDE.md (48 lines)
 ```markdown
 # Code Review Agent
 
@@ -48,7 +52,7 @@ Review code for quality, security, and adherence to team standards.
 Markdown report with: summary, findings by severity, and an overall grade.
 ```
 
-### Command: .claude/commands/review.md
+### ✅ Command: .claude/commands/review.md
 ```markdown
 ---
 name: review
@@ -102,9 +106,9 @@ content-pipeline/
 - **writer** subagent gets Read + Write + Edit (no web tools). Reads research notes, writes drafts.
 - **brand-voice** skill loads the style guide only when writing phase begins.
 - Progress tracked in JSON at project root.
-- **Hooks** auto-run markdown formatter after every Write to output/.
+- **Hooks** auto-run markdown formatter after every Write to output/. Hook scripts receive tool input as JSON via stdin.
 
-### Subagent: .claude/agents/researcher.md
+### ✅ Subagent: .claude/agents/researcher.md
 ```markdown
 ---
 name: researcher
@@ -131,7 +135,10 @@ Markdown file with: key findings, source list with URLs, and identified gaps.
 - Discard low-quality sources (SEO farms, forums, undated content).
 ```
 
-### Hooks in settings.json
+### ✅ Hooks in settings.json
+
+> **Official:** Hook commands receive tool context as **JSON via stdin**, not via environment variables like `$FILE`. Parse stdin with `jq` or similar to extract file paths and other details.
+
 ```json
 {
   "hooks": {
@@ -141,7 +148,7 @@ Markdown file with: key findings, source list with URLs, and identified gaps.
         "hooks": [
           {
             "type": "command",
-            "command": "if echo \"$FILE\" | grep -q 'output/'; then prettier --write \"$FILE\" 2>/dev/null; fi"
+            "command": "input=$(cat); file=$(echo \"$input\" | jq -r '.tool_input.file_path // empty'); if [ -n \"$file\" ] && echo \"$file\" | grep -q 'output/'; then prettier --write \"$file\" 2>/dev/null; fi"
           }
         ]
       }
@@ -213,7 +220,9 @@ The first session uses a different prompt than subsequent sessions:
 5. Implement and verify it
 6. Update feature-list.json and commit
 
-### Evaluator agent pattern (GAN-inspired)
+### Evaluator agent pattern
+
+> **Interpretation:** The three-agent architecture (planner / generator / evaluator) is a **recommended pattern** described by Anthropic, not a mandatory structure. Adapt it to your task's complexity and quality requirements.
 
 The evaluator operates independently from the implementer:
 
@@ -222,7 +231,7 @@ The evaluator operates independently from the implementer:
 3. **Grading with thresholds:** Each criterion has a hard score threshold. If any falls below, the sprint fails and the implementer gets detailed feedback.
 4. **Skepticism prompt:** The evaluator is explicitly told to be skeptical and not approve mediocre work.
 
-### Evaluator: .claude/agents/evaluator.md
+### ✅ Evaluator: .claude/agents/evaluator.md
 ```markdown
 ---
 name: evaluator
@@ -257,17 +266,20 @@ If ANY criterion falls below its threshold, the sprint FAILS.
 - Distinguish between bugs (FAIL) and polish items (note but pass).
 ```
 
-### Hooks in settings.json
+### ✅ Hooks in settings.json
+
+> **Official:** Hook exit codes: `0` = allow, `1` = warning (logged, not blocked), `2` = block the action. The `matcher` field targets **tool names** (e.g., `"Bash"`, `"Write"`, `"Edit|Write"`). Use conditional logic inside the hook script for finer command-level filtering. Hook commands receive input as **JSON via stdin**.
+
 ```json
 {
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash(rm *)",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Destructive operation blocked' && exit 1"
+            "command": "input=$(cat); cmd=$(echo \"$input\" | jq -r '.tool_input.command // empty'); if echo \"$cmd\" | grep -qE '^rm\\s+-rf\\s'; then echo 'Destructive rm -rf blocked' >&2; exit 2; fi; exit 0"
           }
         ]
       }
@@ -278,7 +290,18 @@ If ANY criterion falls below its threshold, the sprint FAILS.
         "hooks": [
           {
             "type": "command",
-            "command": "if echo \"$FILE\" | grep -qE '\\.(ts|tsx|js|jsx)$'; then npx eslint --fix \"$FILE\" 2>/dev/null; fi"
+            "command": "input=$(cat); file=$(echo \"$input\" | jq -r '.tool_input.file_path // empty'); if [ -n \"$file\" ] && echo \"$file\" | grep -qE '\\.(ts|tsx|js|jsx)$'; then npx eslint --fix \"$file\" 2>/dev/null; fi"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "The previous command failed. Check the error output and try a different approach."
           }
         ]
       }
@@ -298,7 +321,7 @@ If ANY criterion falls below its threshold, the sprint FAILS.
 }
 ```
 
-### Feature list format (JSON, not Markdown)
+### ✅ Feature list format (JSON, not Markdown)
 ```json
 [
   {
@@ -349,7 +372,7 @@ research-workflow/
 └── README.md
 ```
 
-### Plugin manifest: .claude-plugin/plugin.json
+### ✅ Plugin manifest: .claude-plugin/plugin.json
 ```json
 {
   "name": "research-workflow",
@@ -361,7 +384,10 @@ research-workflow/
 }
 ```
 
-### Hooks: hooks/hooks.json
+### ✅ Hooks: hooks/hooks.json
+
+> **Official:** Plugin hooks must use `${CLAUDE_PLUGIN_ROOT}` for file paths. Hook scripts receive input as JSON via stdin.
+
 ```json
 {
   "description": "Citation and output validation hooks",

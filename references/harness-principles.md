@@ -1,14 +1,21 @@
 # Harness Engineering Principles
 
-Consolidated from Anthropic's engineering blog, platform documentation, and community best practices (updated April 5, 2026).
+Consolidated from Anthropic's engineering blog, platform documentation, and community best practices (updated April 2026).
+
+> **Source labels used in this document:**
+> - **Official** — Directly from Anthropic's documentation or blog posts
+> - **Interpretation** — Inferred from Anthropic's examples, observed behavior, or engineering context
+> - **Optional Practice** — Community convention or author recommendation; not from Anthropic
 
 ## Foundational principle
 
-"Find the simplest solution possible, and only increase complexity when needed." — Anthropic, Building Effective Agents
+> **Official:** "Find the simplest solution possible, and only increase complexity when needed." — Anthropic, Building Effective Agents
 
 Reliable AI agents are built through better harness design, not better models. The harness is everything outside the model: tool access, context management, safety rules, feedback loops, and observability.
 
 ## The two core problems
+
+> **Official** (from Anthropic's harness blog)
 
 ### 1. One-shotting
 Agents try to do everything at once, exhaust the context window mid-implementation, and leave the next session with broken, undocumented work.
@@ -22,6 +29,8 @@ After some progress, the agent sees existing work and declares the project done.
 
 ## The agent loop
 
+> **Official**
+
 All effective agents follow: **gather context → take action → verify work → repeat**
 
 This loop must be explicitly designed into the harness:
@@ -32,6 +41,8 @@ This loop must be explicitly designed into the harness:
 
 ## Harness evolution stages
 
+> **Interpretation:** These stages are derived from Anthropic's examples. They represent a common progression, not a mandatory ladder.
+
 | Stage | Architecture | When to use |
 |-------|-------------|-------------|
 | 1 | Single agent + rich CLAUDE.md | Default starting point. Works for most tasks. |
@@ -40,7 +51,9 @@ This loop must be explicitly designed into the harness:
 
 ### Stage 3: The three-agent architecture (March 2026)
 
-Anthropic's latest harness for long-running application development uses three specialized agents inspired by Generative Adversarial Networks (GANs):
+> **Official** (from Anthropic's harness blog). Note: this is a **recommended pattern** that Anthropic used for long-running application development, not a mandatory structure for all harnesses. Adapt or simplify based on your task's complexity.
+
+Anthropic's harness for long-running application development uses three specialized agents inspired by Generative Adversarial Networks (GANs):
 
 **Planner:** Takes a short 1-4 sentence prompt and expands it into a full product spec. Prompted to be ambitious about scope and focus on product context rather than granular technical implementation. If the planner over-specifies technical details and gets something wrong, errors cascade into downstream implementation.
 
@@ -50,9 +63,11 @@ Anthropic's latest harness for long-running application development uses three s
 
 **Sprint contracts:** Before each sprint, the generator and evaluator negotiate what "done" looks like. The generator proposes what it will build and how success is verified; the evaluator reviews to ensure correctness. Communication happens via files — one agent writes, another reads.
 
-**Key finding on self-evaluation:** Models systematically praise their own work, even when quality is mediocre. Separating generator from evaluator is far more tractable than making a generator self-critical. The evaluator must be tuned to be skeptical — this takes multiple rounds of reading evaluator logs, finding where its judgment diverges from yours, and updating the prompt.
+> **Official** (key finding on self-evaluation): Models systematically praise their own work, even when quality is mediocre. Separating generator from evaluator is far more tractable than making a generator self-critical. The evaluator must be tuned to be skeptical — this takes multiple rounds of reading evaluator logs, finding where its judgment diverges from yours, and updating the prompt.
 
 ### Evolving with models
+
+> **Official**
 
 Every component in a harness encodes an assumption about what the model cannot do on its own. These assumptions must be stress-tested regularly because they go stale as models improve.
 
@@ -77,6 +92,8 @@ The evaluator's value depends on where the task sits relative to what the model 
 
 ### Claude Agent SDK orchestration
 
+> **Official**
+
 Anthropic's three-agent architecture is built on the Claude Agent SDK. The SDK provides:
 - **Automatic compaction** — handles context growth transparently, eliminating manual context reset logic
 - **Agent loop management** — structured tool-use loops with built-in error recovery
@@ -90,6 +107,8 @@ When building harnesses programmatically (outside Claude Code's `.claude/` direc
 - Claude Agent SDK: Programmatic pipelines, CI/CD integration, custom multi-agent systems, production deployments
 
 ## Session continuity
+
+> **Official**
 
 Each new context window starts with zero memory. Bridge sessions with:
 
@@ -109,12 +128,21 @@ Each new context window starts with zero memory. Bridge sessions with:
 ## Context window management
 
 ### Context rot and attention budget
+
+> **Official**
+
 Context accuracy degrades as token count increases (context rot). Every token competes with every other token for the model's attention — the "attention budget." This means more information often makes agents worse, not better.
 
 ### Instruction budget
+
+> **Official** (~150-200 instructions); **Interpretation** (community recommends CLAUDE.md under 60 lines)
+
 ~150-200 instructions before compliance drops. The Claude Code system prompt consumes ~50. Community best practice: keep CLAUDE.md under 60 lines when possible.
 
 ### Compaction vs. context reset
+
+> **Official**
+
 **Compaction:** Summarize earlier parts of the conversation and reinitiate with the summary. Preserves continuity but does not give the agent a clean slate. Good for: tasks requiring back-and-forth dialogue.
 
 **Context reset:** Clear the context entirely, start a fresh agent with a structured handoff artifact. Provides a clean slate but requires robust state transfer. Good for: long tasks where context anxiety occurs.
@@ -122,12 +150,20 @@ Context accuracy degrades as token count increases (context rot). Every token co
 **Context anxiety:** Some models (notably Sonnet 4.5) begin wrapping up work prematurely as they approach what they believe is the context limit. Compaction alone does not fix this — context resets are needed. Opus 4.6 largely eliminated this behavior, making compaction sufficient.
 
 ### Subagents as context firewalls
+
+> **Official**
+
 Use subagents to isolate exploration noise. Each subagent explores extensively (10,000+ tokens) but returns only a condensed summary (1,000-2,000 tokens) to the main agent.
 
 ### Long task prompting
+
+> **Optional Practice**
+
 For lengthy tasks: "This is a very long task, so plan your work clearly. Don't run out of context with significant uncommitted work."
 
 ## Tool design principles
+
+> **Official** (Anthropic blog + Vercel case study)
 
 - Fewer tools often lead to better performance (Vercel removed 80% and improved).
 - If a CLI is well-represented in training data (git, docker, psql), prompt the agent to use the CLI directly rather than adding an MCP server.
@@ -138,6 +174,8 @@ For lengthy tasks: "This is a very long task, so plan your work clearly. Don't r
 
 ## Verification loops
 
+> **Official**
+
 The most common failure: marking work complete without proper end-to-end testing.
 
 - Provide testing tools appropriate to the domain (Playwright for web, pytest for Python, etc.)
@@ -147,6 +185,9 @@ The most common failure: marking work complete without proper end-to-end testing
 - Calibrate the evaluator with few-shot examples showing detailed score breakdowns
 
 ### Evaluation criteria example (frontend design)
+
+> **Interpretation** (derived from Anthropic's DAW experiment scoring)
+
 - **Design quality:** Does the design feel like a coherent whole rather than a collection of parts?
 - **Originality:** Evidence of custom decisions, or just template layouts and library defaults?
 - **Craft:** Typography hierarchy, spacing consistency, color harmony, contrast ratios.
@@ -156,13 +197,28 @@ Weight criteria by what the model struggles with (design quality, originality) o
 
 ## Hooks: deterministic enforcement
 
+> **Official**
+
 Hooks are event-driven automation scripts that execute at specific points in Claude Code's lifecycle. Unlike CLAUDE.md instructions (advisory, ~80% compliance), hooks are deterministic (100% execution).
 
 ### When to use hooks vs. CLAUDE.md
 - **Hooks:** Hard requirements that must happen every time — formatting, linting, security scanning, permission enforcement.
 - **CLAUDE.md:** Guidance that Claude should consider — coding style, architectural preferences, workflow suggestions.
 
-### Hook events (14 events as of April 2026)
+### Hook input model
+
+> **Official:** Hook commands receive context as **JSON via stdin**. Do NOT use environment variables like `$FILE` — they are not provided. Parse stdin with `jq` or a script to extract tool input fields such as `file_path`, `command`, etc.
+
+### Hook exit codes
+
+> **Official:**
+> - `0` — Allow the action to proceed
+> - `1` — Log a warning (action is NOT blocked)
+> - `2` — Block the action / prompt Claude to reconsider
+
+### Hook events (April 2026)
+
+> **Official** events are from Anthropic's documentation. **Observed** events have been seen in practice.
 
 **Session lifecycle:**
 - `SessionStart` — When session begins. Good for environment setup, context priming.
@@ -191,22 +247,30 @@ Hooks are event-driven automation scripts that execute at specific points in Cla
 
 **Context management:**
 - `PreCompact` — Before compaction. Good for injecting reminders that must survive compaction.
+- `PostCompact` (Observed) — After compaction completes. Good for verifying critical context survived.
 - `Notification` — For injecting context after events like compaction or other system events.
 
+**Other observed events:**
+- `TaskCreated` (Observed) — When a new task is created. Useful for logging and routing.
+- `ConfigChange` (Observed) — When configuration changes at runtime. Useful for dynamic reconfiguration.
+
+> **Note:** The event surface may expand over time. Check the official Claude Code documentation for the latest list.
+
 ### Hook types
-- **Command hooks:** Execute shell scripts. Best for local validation and formatting. Claude Code passes hook input as JSON via stdin.
+- **Command hooks:** Execute shell scripts. Best for local validation and formatting. Receive hook input as JSON via stdin.
 - **HTTP hooks:** Call external services. Best for CI/CD integration, external APIs.
 - **Prompt hooks:** Modify Claude's behavior without external processes. Best for context injection and reminders.
 
-### Hook exit codes
-- `0` — Allow the action
-- `1` — Block the action
-- `2` — Prompt Claude to reconsider
+### Hook matcher
+
+> **Official:** The `matcher` field targets **tool names** (e.g., `"Bash"`, `"Write"`, `"Edit|Write"`). For finer filtering (e.g., blocking specific shell commands), parse the stdin JSON inside the hook script and apply conditional logic there.
 
 ### Hook priority
 PreToolUse hooks override the permission system entirely — they are the highest-priority control mechanism. A PreToolUse hook returning deny will block a tool call even if permissions explicitly allow it.
 
 ## Plugins: shareable harness packages
+
+> **Official**
 
 Plugins bundle skills, subagents, hooks, MCP servers, and settings into a single installable unit. A plugin is your `.claude/` directory packaged up with a manifest.
 
@@ -234,6 +298,9 @@ plugin-name/
 ```
 
 ### Plugin rules
+
+> **Official:**
+
 - Skills are namespaced: `plugin-name:skill-name` (prevents conflicts)
 - Use `${CLAUDE_PLUGIN_ROOT}` to reference files within the plugin
 - `/reload-plugins` picks up changes without restarting
@@ -243,6 +310,8 @@ plugin-name/
 - Plugin marketplaces are git repos with a `marketplace.json` file. The official marketplace is available by default at `claude.ai/settings/plugins/submit`.
 
 ## Agent teams: parallel multi-agent coordination
+
+> **Official**
 
 Agent teams coordinate multiple Claude Code instances working simultaneously. One session acts as team lead; teammates work independently in their own context windows and communicate via a shared task list and mailbox system.
 
@@ -273,6 +342,8 @@ export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 Or add to `.claude/settings.json`.
 
 ## Architecture decision guide
+
+> **Interpretation:** This decision guide synthesizes Anthropic's published guidance into a quick-reference format.
 
 **Use a single agent when:**
 - The task fits within one context window

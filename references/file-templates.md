@@ -104,28 +104,31 @@ You are a {role description} specialist. Your job is to {primary objective}.
 
 ### All supported frontmatter fields (April 2026)
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Identifier for the subagent (kebab-case) |
-| `description` | string | When to invoke this agent. Be pushy with trigger phrases. |
-| `tools` | list | Comma-separated tool names. Use least privilege. |
-| `disallowedTools` | list | Explicitly deny specific tools (alternative to allowlist). |
-| `model` | string | `sonnet`, `opus`, `haiku`, or `opusplan` (Opus planning + Sonnet execution). |
-| `permissionMode` | string | Permission mode for the subagent session. Not supported in plugin subagents. |
-| `mcpServers` | object | MCP server configurations scoped to this subagent. Not supported in plugin subagents. |
-| `hooks` | object | Hook definitions that only run while this subagent is active. Cleaned up when it finishes. Not supported in plugin subagents. All hook events are supported. |
-| `maxTurns` | integer | Maximum number of tool-use turns before the subagent stops. |
-| `skills` | list | Skills to preload into the subagent's context. |
-| `initialPrompt` | string | First message sent to the subagent when it starts. |
-| `memory` | string | Scope for persistent memory directory. `user` = `~/.claude/agent-memory/`, `project` = project-level. Accumulates insights across conversations. |
-| `effort` | string | Reasoning depth: `low`, `medium`, `high`. Controls adaptive thinking. |
-| `background` | boolean | Run the subagent in background mode. |
-| `isolation` | string | Worktree isolation level for safe parallel work. |
-| `color` | string | Background color for UI identification of the subagent. |
-| `prompt` | string | System prompt (used in CLI `--agents` JSON flag, equivalent to the markdown body). |
+> Fields marked **Official** are documented by Anthropic. Fields marked **Interpretation** are derived from observed behavior or community usage.
+
+| Field | Type | Source | Description |
+|-------|------|--------|-------------|
+| `name` | string | Official | Identifier for the subagent (kebab-case). |
+| `description` | string | Official | When to invoke this agent. Be pushy with trigger phrases. |
+| `tools` | list | Official | Comma-separated tool names. Use least privilege. |
+| `disallowedTools` | list | Official | Explicitly deny specific tools (alternative to allowlist). |
+| `model` | string | Official | `sonnet`, `opus`, `haiku`, or `opusplan` (Opus planning + Sonnet execution). |
+| `permissionMode` | string | Official | Permission mode for the subagent session. Not supported in plugin subagents. |
+| `mcpServers` | object | Official | MCP server configurations scoped to this subagent. Not supported in plugin subagents. |
+| `hooks` | object | Official | Hook definitions that only run while this subagent is active. Cleaned up when it finishes. Not supported in plugin subagents. All hook events are supported. |
+| `maxTurns` | integer | Official | Maximum number of tool-use turns before the subagent stops. |
+| `skills` | list | Official | Skills to preload into the subagent's context. |
+| `initialPrompt` | string | Official | First message sent to the subagent when it starts. |
+| `memory` | string | Official | Scope for persistent memory directory. `user` = `~/.claude/agent-memory/`, `project` = project-level, `local` = current working directory scope. Accumulates insights across conversations. |
+| `effort` | string | Official | Reasoning depth: `low`, `medium`, `high`. Controls adaptive thinking. |
+| `background` | boolean | Official | Run the subagent in background mode. |
+| `isolation` | string | Official | Worktree isolation level for safe parallel work. |
+| `color` | string | Official | Background color for UI identification of the subagent. |
+| `prompt` | string | Official | System prompt (used in CLI `--agents` JSON flag, equivalent to the markdown body). |
 
 ### Security constraints for plugin subagents
-Plugin subagents do NOT support `hooks`, `mcpServers`, or `permissionMode`. This prevents third-party plugins from modifying permission enforcement or injecting hooks.
+
+> **Official:** Plugin subagents do NOT support `hooks`, `mcpServers`, or `permissionMode`. This prevents third-party plugins from modifying permission enforcement or injecting hooks.
 
 ### Subagent with hooks example
 
@@ -145,7 +148,17 @@ hooks:
 You are a database query specialist. Only execute SELECT queries.
 ```
 
-The PreToolUse hook validates that every Bash command is a read-only query before execution. Claude Code passes hook input as JSON via stdin to hook commands.
+The PreToolUse hook validates that every Bash command is a read-only query before execution. Claude Code passes hook input as **JSON via stdin** to hook commands — the script should read from stdin and parse the JSON to inspect the command.
+
+### Subagent configuration formats
+
+> **Official:** Subagents can be defined in two ways:
+
+**File-based** (`.claude/agents/{name}.md`): Markdown files with YAML frontmatter. This is the standard approach for Claude Code projects.
+
+**JSON-based** (CLI `--agents` flag): JSON objects passed via the command line. Uses the `prompt` field instead of a markdown body. This is for programmatic or CI/CD usage.
+
+These are two interfaces to the same underlying agent system. Do not mix them in the same project.
 
 **Checklist:** Tools follow least privilege? Description includes trigger phrases? Output format is explicit? Hooks enforce hard constraints? Memory scope chosen intentionally?
 
@@ -153,7 +166,7 @@ The PreToolUse hook validates that every Bash command is a read-only query befor
 
 ## Evaluator agent template (.claude/agents/evaluator.md)
 
-Use when self-evaluation fails — the generator consistently marks mediocre work as good.
+> **Interpretation:** The evaluator pattern is a recommended approach when self-evaluation fails — the generator consistently marks mediocre work as good. It is not required for every harness.
 
 ```markdown
 ---
@@ -251,13 +264,15 @@ description: {What this skill does and when to use it. Be pushy: include specifi
 | {Comprehensive request} | {Deep} | {Extensive output} |
 ```
 
-**Checklist:** Description is "pushy"? Under 5,000 words? Detailed knowledge in references/ not here?
+> **Official:** Keep SKILL.md **under 500 lines**. Move detailed domain knowledge, large reference tables, and extended examples into `references/` files that are loaded on demand.
+
+**Checklist:** Description is "pushy"? Under 500 lines? Detailed knowledge in references/ not in SKILL.md?
 
 ### Skill with bundled resources
 
 ```
 skill-name/
-├── SKILL.md              # Core instructions (under 5,000 words)
+├── SKILL.md              # Core instructions (under 500 lines)
 ├── scripts/
 │   └── process.py        # Deterministic/repetitive tasks as code
 ├── references/
@@ -339,6 +354,17 @@ Common glob patterns:
 
 ## Hooks template (.claude/settings.json or hooks/hooks.json for plugins)
 
+### Hook input model
+
+> **Official:** Hook commands receive context as **JSON via stdin**. Do NOT rely on environment variables like `$FILE`. Use `cat` to read stdin and `jq` (or equivalent) to parse the JSON structure. The JSON contains fields such as `tool_name`, `tool_input`, and other event-specific data.
+
+### Hook exit codes
+
+> **Official:** Exit codes determine what happens after a hook runs:
+> - `0` — Allow the action to proceed
+> - `1` — Log a warning but do NOT block the action
+> - `2` — Block the action (or prompt Claude to reconsider for PreToolUse)
+
 ### Hooks in settings.json (project-level)
 
 ```json
@@ -349,11 +375,11 @@ Common glob patterns:
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "npm run lint --fix $FILE"
+            "command": "input=$(cat); cmd=$(echo \"$input\" | jq -r '.tool_input.command // empty'); if echo \"$cmd\" | grep -qE '^rm\\s+-rf'; then echo 'Blocked destructive rm -rf' >&2; exit 2; fi; exit 0"
           }
         ]
       }
@@ -364,7 +390,7 @@ Common glob patterns:
         "hooks": [
           {
             "type": "command",
-            "command": "./scripts/format.sh"
+            "command": "input=$(cat); file=$(echo \"$input\" | jq -r '.tool_input.file_path // empty'); if [ -n \"$file\" ]; then ./scripts/format.sh \"$file\"; fi"
           }
         ]
       }
@@ -386,7 +412,7 @@ Common glob patterns:
         "hooks": [
           {
             "type": "command",
-            "command": "./scripts/log-denied-action.sh"
+            "command": "input=$(cat); echo \"$input\" >> /tmp/denied-actions.log"
           }
         ]
       }
@@ -430,23 +456,30 @@ Common glob patterns:
 
 ### All hook events reference (April 2026)
 
-| Event | When it fires | Common use |
-|-------|--------------|------------|
-| `SessionStart` | Session begins | Environment setup, context priming |
-| `SessionEnd` | Session ends | Cleanup, state saving |
-| `UserPromptSubmit` | Before processing user input | Input validation, routing |
-| `PermissionRequest` | Permission decision needed | Auto-approve/deny |
-| `PermissionDenied` | After auto mode classifier denial | Return `{retry: true}` to allow retry |
-| `PreToolUse` | Before tool runs | Validate, deny, defer, or modify. Highest priority. |
-| `PostToolUse` | After tool succeeds | Formatting, logging, notifications |
-| `PostToolUseFailure` | After tool fails | Error recovery, fallback |
-| `SubagentStart` | Subagent spawns | Logging, resource allocation |
-| `SubagentStop` | Subagent finishes | Cleanup, result validation |
-| `Stop` | Main agent finishes | Final validation, cleanup |
-| `TaskCompleted` | Task marked complete | Follow-up actions (blocking) |
-| `TeammateIdle` | Agent team member idle | Work reassignment |
-| `PreCompact` | Before compaction | Inject must-survive reminders |
-| `Notification` | After system events | Context injection post-compaction |
+> **Official** events are documented in Anthropic's hook specification. Events marked **Observed** have been seen in practice but may not appear in all documentation.
+
+| Event | When it fires | Common use | Source |
+|-------|--------------|------------|--------|
+| `SessionStart` | Session begins | Environment setup, context priming | Official |
+| `SessionEnd` | Session ends | Cleanup, state saving | Official |
+| `UserPromptSubmit` | Before processing user input | Input validation, routing | Official |
+| `PermissionRequest` | Permission decision needed | Auto-approve/deny | Official |
+| `PermissionDenied` | After auto mode classifier denial | Return `{retry: true}` to allow retry | Official |
+| `PreToolUse` | Before tool runs | Validate, deny, defer, or modify. Highest priority. | Official |
+| `PostToolUse` | After tool succeeds | Formatting, logging, notifications | Official |
+| `PostToolUseFailure` | After tool fails | Error recovery, fallback | Official |
+| `SubagentStart` | Subagent spawns | Logging, resource allocation | Official |
+| `SubagentStop` | Subagent finishes | Cleanup, result validation | Official |
+| `Stop` | Main agent finishes | Final validation, cleanup | Official |
+| `TaskCompleted` | Task marked complete | Follow-up actions (blocking) | Official |
+| `TeammateIdle` | Agent team member idle | Work reassignment | Official |
+| `PreCompact` | Before compaction | Inject must-survive reminders | Official |
+| `PostCompact` | After compaction completes | Verify critical context survived | Observed |
+| `Notification` | After system events | Context injection post-compaction | Official |
+| `TaskCreated` | New task is created | Logging, routing | Observed |
+| `ConfigChange` | Configuration changes at runtime | Dynamic reconfiguration | Observed |
+
+> **Note:** The event surface may expand over time. Check the official Claude Code documentation for the latest list.
 
 ### Hooks in plugin format (hooks/hooks.json)
 
@@ -482,23 +515,23 @@ Common glob patterns:
 
 ### Common hook patterns
 
-**Auto-format after every edit:**
+**✅ Auto-format after every edit (stdin JSON):**
 ```json
 {
   "matcher": "Edit|Write",
-  "hooks": [{ "type": "command", "command": "prettier --write $FILE" }]
+  "hooks": [{ "type": "command", "command": "input=$(cat); file=$(echo \"$input\" | jq -r '.tool_input.file_path // empty'); if [ -n \"$file\" ]; then prettier --write \"$file\" 2>/dev/null; fi" }]
 }
 ```
 
-**Security scan before file writes:**
+**✅ Block dangerous commands (stdin JSON, exit 2 to block):**
 ```json
 {
-  "matcher": "Write",
-  "hooks": [{ "type": "command", "command": "./scripts/security-scan.sh" }]
+  "matcher": "Bash",
+  "hooks": [{ "type": "command", "command": "input=$(cat); cmd=$(echo \"$input\" | jq -r '.tool_input.command // empty'); if echo \"$cmd\" | grep -qE 'DROP TABLE|TRUNCATE'; then echo 'Destructive SQL blocked' >&2; exit 2; fi; exit 0" }]
 }
 ```
 
-**Re-inject context after compaction:**
+**✅ Re-inject context after compaction:**
 ```json
 {
   "matcher": "",
@@ -506,7 +539,7 @@ Common glob patterns:
 }
 ```
 
-**Checklist:** Hard requirements use hooks, not CLAUDE.md? Exit codes are correct (0=allow, 1=block, 2=reconsider)? Plugin hooks use `${CLAUDE_PLUGIN_ROOT}`?
+**Checklist:** Hard requirements use hooks, not CLAUDE.md? Exit codes correct (0=allow, 1=warn, 2=block)? Hook scripts read stdin JSON (not `$FILE`)? Plugin hooks use `${CLAUDE_PLUGIN_ROOT}`?
 
 ---
 

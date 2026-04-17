@@ -54,7 +54,7 @@ python3 scripts/scaffold.py parallel-debug ./output \
   --teams --model sonnet
 ```
 
-Run `python3 scripts/scaffold.py --help` for all options. Additional flags: `--model` (sonnet/opus/haiku), `--memory` (user/project/none), `--background`, `--teams`.
+Run `python3 scripts/scaffold.py --help` for all options. Additional flags: `--model` (sonnet/opus/haiku/opusplan), `--memory` (user/project/local/none), `--background`, `--teams`.
 
 ## What's inside
 
@@ -72,12 +72,18 @@ harness-engineer/
 
 ### Reference materials
 
+Content in the reference files is tagged with source labels so you can tell what is load-bearing documentation vs. recommended practice:
+
+- **Official** — directly from Anthropic's documentation or engineering blog posts
+- **Interpretation** — inferred from Anthropic's examples, observed behavior, or engineering context
+- **Optional Practice** — community convention or author recommendation
+
 | File | What it covers |
 |------|---------------|
-| `harness-principles.md` | The agent loop, harness evolution stages (single → two-agent → GAN-inspired three-agent), model-specific harness configurations, Claude Agent SDK orchestration, session continuity, verification loops, tool design, all 14 hook events, agent teams with delegate mode, plugins, and the architecture decision framework |
-| `context-engineering.md` | Context rot, attention budgets, progressive disclosure, CLAUDE.md design rules, skill/subagent context design, model-specific compaction strategies, SDK auto-compaction, and 18 anti-patterns to avoid |
-| `file-templates.md` | Copy-paste templates for CLAUDE.md, settings.json, subagents (with full 16-field frontmatter reference), evaluators, skills, commands, rules, hooks (all 14 events), plugins, progress tracking, and feature lists |
-| `examples.md` | Four complete examples — a simple code reviewer, a two-agent content pipeline, a four-agent development harness, and a reusable research plugin |
+| `harness-principles.md` | The agent loop, harness evolution stages (single → two-agent → three-agent generator/evaluator), model-specific harness configurations, Claude Agent SDK orchestration, session continuity, verification loops, tool design, the full set of hook events (with stdin JSON input model and 0/1/2 exit-code semantics), agent teams with delegate mode, plugins, and the architecture decision framework |
+| `context-engineering.md` | Context rot, attention budgets, progressive disclosure, CLAUDE.md design rules, skill/subagent context design (SKILL.md under 500 lines), model-specific compaction strategies, SDK auto-compaction, and 18 anti-patterns to avoid |
+| `file-templates.md` | Copy-paste templates for CLAUDE.md, settings.json, subagents (17-field frontmatter reference with source labels), evaluators, skills, commands, rules, hooks (event table with stdin JSON input and tool-name matchers), plugins, progress tracking, and feature lists |
+| `examples.md` | Four complete examples — a simple code reviewer, a two-agent content pipeline, a four-agent development harness, and a reusable research plugin. Snippets are tagged ✅ (safe to copy) or 📐 (conceptual pseudocode — adapt before use) |
 
 ## Key concepts
 

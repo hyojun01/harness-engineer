@@ -2,15 +2,24 @@
 
 Updated April 2026 from Anthropic's "Effective context engineering for AI agents" blog (Sep 2025), "Harness design for long-running application development" (Mar 2026), and related documentation.
 
+> **Source labels used in this document:**
+> - **Official** — Directly from Anthropic's documentation or blog posts
+> - **Interpretation** — Inferred from Anthropic's examples or engineering context
+> - **Optional Practice** — Community convention or author recommendation
+
 Context engineering is the set of strategies for curating and maintaining the optimal set of tokens during LLM inference. It is the natural progression of prompt engineering: while prompt engineering focuses on how to write effective prompts, context engineering addresses the broader question of what configuration of context is most likely to generate the desired behavior.
 
 ## The golden rule
+
+> **Official**
 
 Find the *smallest possible* set of high-signal tokens that maximize the likelihood of the desired outcome.
 
 More information often makes agents worse, not better. Every token competes with every other token for the model's attention.
 
 ## Context rot and the attention budget
+
+> **Official**
 
 LLMs, like humans, lose focus as context grows. Studies show that as token count increases, the model's ability to accurately recall information from that context decreases — this is called **context rot**.
 
@@ -20,6 +29,8 @@ Treat context as a **finite resource with diminishing marginal returns**. The mo
 
 ## Progressive disclosure (most important pattern)
 
+> **Official**
+
 Show just enough information to help the agent decide what to do next, then reveal more details as needed.
 
 ### Three-tier loading
@@ -27,13 +38,15 @@ Show just enough information to help the agent decide what to do next, then reve
 | Tier | What loads | When | Size budget |
 |------|-----------|------|-------------|
 | 1. Metadata | Skill name + description | Always (system prompt) | 1-2 sentences each |
-| 2. Instructions | SKILL.md body | When skill is triggered | Under 5,000 words |
+| 2. Instructions | SKILL.md body | When skill is triggered | Under 500 lines |
 | 3. Resources | references/, scripts/, assets/ | During execution, on demand | Effectively unbounded |
 
 ### Why it matters
 A project with 50 skills does not consume 50x tokens. Claude scans metadata, identifies the 1-2 relevant skills, and loads only what is necessary.
 
 ## Hybrid retrieval strategy
+
+> **Official**
 
 The most effective agents combine upfront context with just-in-time exploration:
 
@@ -52,6 +65,8 @@ This mirrors human cognition: we don't memorize entire corpuses but use indexing
 **Tradeoff:** Runtime exploration is slower than pre-computed retrieval. The decision boundary for the right level of autonomy depends on the task. As models improve, lean toward letting models act autonomously with progressively less human curation.
 
 ## CLAUDE.md design rules
+
+> **Official** (content criteria, what belongs/doesn't belong); **Optional Practice** (line count recommendations)
 
 ### Content criteria
 For every line, ask: "Would Claude make a mistake without this?" If Claude already does something correctly on its own, the instruction is noise.
@@ -81,11 +96,16 @@ For every line, ask: "Would Claude make a mistake without this?" If Claude alrea
 - No redundancy — say it once, in the right place
 
 ### The right altitude
+
+> **Official**
+
 System prompts should be specific enough to guide behavior effectively, yet flexible enough to provide strong heuristics. Two failure modes:
 - **Too rigid:** Hardcoding complex brittle logic creates fragility and maintenance complexity
 - **Too vague:** High-level guidance that fails to give concrete signals or falsely assumes shared context
 
 ## Skill description design
+
+> **Official**
 
 The description is the single most important field. It determines whether the skill triggers.
 
@@ -111,6 +131,8 @@ Create, format, and analyze Excel spreadsheets. Use this skill whenever the user
 
 ## Skill body (SKILL.md) design
 
+> **Official** (structure and approach); **Optional Practice** (specific format recommendations)
+
 ### Write for another Claude instance
 The skill will be consumed by a different Claude instance. Include:
 - Procedural knowledge that is not obvious
@@ -121,6 +143,10 @@ The skill will be consumed by a different Claude instance. Include:
 
 ### Imperative voice
 Write "Do X" or "To accomplish X, do Y" — not "You should do X."
+
+### Size guideline
+
+> **Official:** Keep SKILL.md **under 500 lines**. Move detailed domain knowledge, large reference tables, and extended examples into `references/` files that are loaded on demand.
 
 ### Structure
 1. Brief purpose statement
@@ -133,6 +159,8 @@ Write "Do X" or "To accomplish X, do Y" — not "You should do X."
 "Do NOT use bullet points in the report body" is as valuable as positive instructions. Negative examples define boundaries.
 
 ## Subagent context design
+
+> **Official**
 
 ### System prompt
 The subagent's system prompt replaces the default Claude Code system prompt entirely. It should include:
@@ -157,6 +185,9 @@ Apply least privilege:
 ## Context strategies for long-horizon tasks
 
 ### Compaction
+
+> **Official**
+
 Summarize conversation contents and reinitiate with the summary. The art lies in what to keep vs. discard:
 - Maximize recall first (capture every relevant piece)
 - Then iterate to improve precision (eliminate superfluous content)
@@ -165,9 +196,14 @@ Summarize conversation contents and reinitiate with the summary. The art lies in
 - Discard: redundant tool outputs, verbose logs, resolved issues
 
 ### Claude Agent SDK auto-compaction
+
+> **Official**
+
 The Claude Agent SDK handles compaction automatically for SDK-based harnesses. It monitors token usage and compacts when approaching limits. Note: autocompact includes a thrash loop detector — if context refills to the limit immediately after compacting three times in a row, it stops with an actionable error.
 
 ### Compaction vs. context reset (model-specific)
+
+> **Official**
 
 **Context anxiety** varies by model:
 - **Sonnet 4.5:** Strong context anxiety. Compaction alone NOT sufficient → context resets essential.
@@ -177,6 +213,9 @@ The Claude Agent SDK handles compaction automatically for SDK-based harnesses. I
 Choose compaction strategy based on the target model.
 
 ### Structured note-taking (agentic memory)
+
+> **Official**
+
 The agent regularly writes notes persisted outside the context window (to-do lists, NOTES.md, progress files). These get pulled back into context at later times.
 
 Benefits:
@@ -186,6 +225,9 @@ Benefits:
 - Enables multi-hour strategies (as demonstrated by Claude playing Pokémon)
 
 ### Sub-agent architectures for context management
+
+> **Official**
+
 The main agent coordinates with a high-level plan while subagents perform deep work. Each subagent explores extensively (10,000+ tokens) but returns only a condensed summary (1,000-2,000 tokens).
 
 Choose based on task characteristics:
@@ -194,6 +236,8 @@ Choose based on task characteristics:
 - **Multi-agent** — Best for complex research/analysis where parallel exploration pays dividends
 
 ## Rules design
+
+> **Official**
 
 ### Glob patterns
 Rules activate only when Claude works on files matching the glob pattern.
@@ -219,6 +263,8 @@ globs: ["src/**/*.ts", "src/**/*.tsx"]
 
 ## State tracking design
 
+> **Official**
+
 ### Use JSON, not Markdown
 Anthropic's experiments found models treat JSON as code and modify it more carefully. Markdown files get inappropriately rewritten, overwritten, or edited.
 
@@ -242,21 +288,23 @@ Anthropic's experiments found models treat JSON as code and modify it more caref
 
 ## Anti-patterns to avoid
 
-1. **Stuffing everything into CLAUDE.md** — Use skills, rules, and hooks instead
-2. **Auto-generating CLAUDE.md** — Hand-crafted files outperform LLM-generated ones
-3. **Too many MCP tools** — Each tool description consumes instruction budget; audit regularly
-4. **No verification step** — Always include a verify/test phase in the workflow
-5. **Vague skill descriptions** — Causes under-triggering; be pushy and specific
+> Sources vary per item. Items without labels are **Interpretation**.
+
+1. **Stuffing everything into CLAUDE.md** — Use skills, rules, and hooks instead (**Official**)
+2. **Auto-generating CLAUDE.md** — Hand-crafted files outperform LLM-generated ones (**Official**)
+3. **Too many MCP tools** — Each tool description consumes instruction budget; audit regularly (**Official**)
+4. **No verification step** — Always include a verify/test phase in the workflow (**Official**)
+5. **Vague skill descriptions** — Causes under-triggering; be pushy and specific (**Official**)
 6. **Duplicating instructions** — Say something once, in the right place
-7. **Markdown for state tracking** — Use JSON
+7. **Markdown for state tracking** — Use JSON (**Official**)
 8. **Skipping negative examples** — They are as important as positive ones
 9. **Deep nesting in skills** — Keep SKILL.md focused; use references/ for depth
-10. **Ignoring the instruction budget** — ~150-200 max; every line costs
-11. **Using CLAUDE.md for hard requirements** — CLAUDE.md is ~80% compliance; use hooks for 100%
-12. **Never auditing the harness** — Components encode model assumptions that go stale; re-test after model upgrades
-13. **Self-evaluation without separation** — Models praise their own work; separate generator from evaluator for quality-critical tasks
+10. **Ignoring the instruction budget** — ~150-200 max; every line costs (**Official**)
+11. **Using CLAUDE.md for hard requirements** — CLAUDE.md is ~80% compliance; use hooks for 100% (**Official**)
+12. **Never auditing the harness** — Components encode model assumptions that go stale; re-test after model upgrades (**Official**)
+13. **Self-evaluation without separation** — Models praise their own work; separate generator from evaluator for quality-critical tasks (**Official**)
 14. **Compaction without testing** — Overly aggressive compaction loses subtle but critical context; tune carefully on complex agent traces
-15. **Using hooks/mcpServers/permissionMode in plugin subagents** — Not supported; will fail silently or error
+15. **Using hooks/mcpServers/permissionMode in plugin subagents** — Not supported; will fail silently or error (**Official**)
 16. **Hardcoding model-specific harness behavior** — Context resets needed for Sonnet 4.5 are unnecessary overhead on Opus 4.6; document which model the harness targets
-17. **Agent teams without delegate mode** — The lead agent will implement tasks itself instead of delegating; use Shift+Tab to restrict the lead's tools
+17. **Agent teams without delegate mode** — The lead agent will implement tasks itself instead of delegating; use Shift+Tab to restrict the lead's tools (**Official**)
 18. **Ignoring subagent memory scope** — Without persistent memory, subagents lose insights across conversations; set memory scope intentionally
