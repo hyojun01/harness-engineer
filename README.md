@@ -1,6 +1,8 @@
 # harness-engineer
 
-A Claude Code skill for designing and generating production-ready agent harnesses. Give it a task description and it produces a complete `.claude/` directory with all necessary files — CLAUDE.md, subagents, skills, commands, rules, hooks, plugin manifests, and progress tracking — following Anthropic's harness engineering best practices (updated April 2026).
+A Claude Code skill for designing and generating agent harness skeletons. Give it a task description and it produces a `.claude/` directory — CLAUDE.md, subagents, skills, commands, rules, hooks, plugin manifests, and progress tracking — with placeholders for the task-specific details you fill in. Content follows Anthropic's Claude Code documentation as of April 2026.
+
+> **What this skill is (and isn't):** A skeleton generator plus a reference library. It is not an auto-writer for production CLAUDE.md files — Anthropic's guidance is that hand-crafted CLAUDE.md files outperform fully auto-generated ones, so the scaffold deliberately leaves `{placeholder}` values for you to finalize. Reference files are labeled `Official`, `Interpretation`, or `Optional Practice` so you can tell load-bearing documentation from author convention.
 
 ## Quick start
 
@@ -51,10 +53,10 @@ python3 scripts/scaffold.py team-tools ./output \
 # Parallel debugging with agent teams
 python3 scripts/scaffold.py parallel-debug ./output \
   --agents hypothesis-a,hypothesis-b \
-  --teams --model sonnet
+  --teams --model inherit
 ```
 
-Run `python3 scripts/scaffold.py --help` for all options. Additional flags: `--model` (sonnet/opus/haiku/opusplan), `--memory` (user/project/local/none), `--background`, `--teams`.
+Run `python3 scripts/scaffold.py --help` for all options. Additional flags: `--model` (inherit/sonnet/opus/haiku — default `inherit` matches the main conversation's model), `--memory` (user/project/local/none), `--background`, `--teams`. The scaffold warns when flag combinations silently conflict (e.g. `--plugin` with `--teams` or `--evaluator`, since plugin subagents can't carry `mcpServers`/`hooks`/`permissionMode` and plugins don't inject the `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` env var).
 
 ## What's inside
 
@@ -80,10 +82,10 @@ Content in the reference files is tagged with source labels so you can tell what
 
 | File | What it covers |
 |------|---------------|
-| `harness-principles.md` | The agent loop, harness evolution stages (single → two-agent → three-agent generator/evaluator), model-specific harness configurations, Claude Agent SDK orchestration, session continuity, verification loops, tool design, the full set of hook events (with stdin JSON input model and 0/1/2 exit-code semantics), agent teams with delegate mode, plugins, and the architecture decision framework |
-| `context-engineering.md` | Context rot, attention budgets, progressive disclosure, CLAUDE.md design rules, skill/subagent context design (SKILL.md under 500 lines), model-specific compaction strategies, SDK auto-compaction, and 18 anti-patterns to avoid |
-| `file-templates.md` | Copy-paste templates for CLAUDE.md, settings.json, subagents (17-field frontmatter reference with source labels), evaluators, skills, commands, rules, hooks (event table with stdin JSON input and tool-name matchers), plugins, progress tracking, and feature lists |
-| `examples.md` | Four complete examples — a simple code reviewer, a two-agent content pipeline, a four-agent development harness, and a reusable research plugin. Snippets are tagged ✅ (safe to copy) or 📐 (conceptual pseudocode — adapt before use) |
+| `harness-principles.md` | Agent loop, harness evolution stages (single → two-agent → three-agent generator/evaluator), model-specific configurations, Claude Agent SDK orchestration, session continuity, verification loops, tool design, the 4 hook handler types (`command` / `http` / `prompt` / `agent`), hook matcher evaluation rules (exact vs. regex), agent teams (3–5 teammates, declarative tool restriction via `Agent(...)` — there is no "Delegate mode" keyboard shortcut), plugins, and the architecture decision framework |
+| `context-engineering.md` | Context rot, attention budgets, progressive disclosure, CLAUDE.md design rules, skill/subagent context design (SKILL.md under 500 lines), the `tools` allowlist vs. `disallowedTools` denylist, subagent `skills`/`mcpServers`/`memory` preloading, model-specific compaction strategies, SDK auto-compaction, and 18 anti-patterns |
+| `file-templates.md` | Copy-paste templates for CLAUDE.md, settings.json, subagents (17-field frontmatter table, all Official), evaluators, skills, commands, rules, hooks (per-event blocks-on-exit-2 table, modern `hookSpecificOutput.permissionDecision` schema, declarative `if` filtering, `SessionStart matcher: "compact"` for reminders that survive compaction), plugins, progress tracking, and feature lists. Also covers running subagents as the main session agent via `claude --agent` and the `Agent(a, b, c)` tool-allowlist syntax |
+| `examples.md` | Four complete examples — simple code reviewer, two-agent content pipeline, four-agent development harness (with Playwright MCP evaluator), and a reusable research plugin. Snippets are tagged ✅ (safe to copy) or 📐 (conceptual pseudocode) |
 
 ## Key concepts
 
@@ -108,6 +110,16 @@ Stage 1: Single agent + CLAUDE.md
 | Hooks | 100% (deterministic) | Linting, security checks, formatting |
 
 **Model-specific strategies:** Harness complexity should match the model. Sonnet 4.5 needs context resets and per-sprint evaluation. Opus 4.5 can rely on compaction. Opus 4.6 supports continuous multi-hour sessions with SDK auto-compaction.
+
+## Common false claims the skill actively avoids
+
+A handful of claims about Claude Code circulate in community posts but are not in Anthropic's documentation. The skill is explicit about not generating them:
+
+- **"Shift+Tab toggles Delegate mode."** No such shortcut exists. To prevent an agent-team lead from implementing tasks itself, restrict its tools declaratively — `tools: Agent(worker_a, worker_b), Read, Bash` — or steer it with natural language.
+- **"`type: prompt` hooks inject reminders."** They don't. A prompt hook sends a single-turn yes/no decision request to a fresh model and expects a JSON response back. For reminders that must survive compaction, use `SessionStart` with `matcher: "compact"` and print to stdout.
+- **"Exit code 2 always blocks."** It only blocks on events that support blocking (`PreToolUse`, `UserPromptSubmit`, `Stop`, `PreCompact`, `TaskCreated`, `TaskCompleted`, and a few more). On `PostToolUse`, `Notification`, `SessionStart`, `CwdChanged`, `FileChanged`, `PostCompact`, `StopFailure`, `PermissionDenied`, and others, exit 2 just surfaces stderr — the action still proceeds.
+- **"Agent teams recommend 2–3 teammates."** Anthropic's recommendation is 3–5.
+- **"`opusplan` is a subagent model value."** `opusplan` is a `/model` CLI alias; subagent frontmatter documents `sonnet` / `opus` / `haiku` / `inherit` / full model IDs.
 
 ## Requirements
 

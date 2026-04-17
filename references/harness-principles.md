@@ -76,7 +76,7 @@ Concrete example: Moving from Opus 4.5 to Opus 4.6 allowed Anthropic to:
 - Drop context resets in favor of automatic compaction
 - Move the evaluator to a single pass at the end rather than per-sprint grading
 
-In the March 2026 browser DAW experiment, Opus 4.6 ran for ~3 hours 50 minutes at $124.70 without the older sprint structure. The earlier retro game maker experiment with Opus 4.5 used the full sprint harness and ran 6 hours at $200.
+Anthropic has published examples of long-running harnesses (e.g. a March 2026 browser DAW experiment with Opus 4.6 running continuously for several hours, and an earlier retro game maker experiment with Opus 4.5 using the full sprint harness). Specific durations and costs from those posts are illustrative — cite Anthropic's engineering blog directly if you need the figures rather than copying them from this reference, as they may be updated or superseded.
 
 **Model-specific harness configurations:**
 
@@ -218,55 +218,42 @@ Hooks are event-driven automation scripts that execute at specific points in Cla
 
 ### Hook events (April 2026)
 
-> **Official** events are from Anthropic's documentation. **Observed** events have been seen in practice.
+> **Official.** The full event list with per-event schemas, matcher rules, and the exit-code-2 behavior table lives in `references/file-templates.md` §Hooks. Keeping it there avoids drift between the two files. Events by cadence:
 
-**Session lifecycle:**
-- `SessionStart` — When session begins. Good for environment setup, context priming.
-- `SessionEnd` — When session ends. Good for cleanup, saving state.
+- **Session lifecycle:** `SessionStart`, `SessionEnd`, `InstructionsLoaded`
+- **User input:** `UserPromptSubmit`
+- **Tool lifecycle:** `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `PermissionDenied`
+- **Agent & teams:** `SubagentStart`, `SubagentStop`, `Stop`, `StopFailure`, `TaskCreated`, `TaskCompleted`, `TeammateIdle`
+- **Compaction & config:** `PreCompact`, `PostCompact`, `ConfigChange`, `Notification`
+- **Filesystem & worktrees:** `CwdChanged`, `FileChanged`, `WorktreeCreate`, `WorktreeRemove`
+- **MCP elicitation:** `Elicitation`, `ElicitationResult`
 
-**User input:**
-- `UserPromptSubmit` — Before processing user input. Good for input validation, routing.
+> **Common mistake:** `type: "prompt"` is NOT a reminder-injection mechanism. It sends a prompt to a fresh model for a yes/no decision and expects a JSON response. For reminders that must survive compaction, use `SessionStart` with `matcher: "compact"` (fires after auto-compaction when the session resumes). `PreCompact` only supports blocking compaction; `PostCompact` has no decision control.
 
-**Permission:**
-- `PermissionRequest` — When a permission decision is needed. Can auto-approve or deny.
-- `PermissionDenied` — After auto mode classifier denials. Return `{retry: true}` to let the model retry.
+### Hook handler types (4 types)
+- **Command hooks** (`type: command`): Execute shell scripts. Best for local validation, formatting, logging. Receive hook input as JSON via stdin. The workhorse.
+- **HTTP hooks** (`type: http`): POST the JSON input to a URL. Best for CI/CD integration, centralized policy services.
+- **Prompt hooks** (`type: prompt`): Send a prompt to a model for **single-turn yes/no evaluation**. Returns a JSON decision. Use for multi-criteria quality gates that need reasoning — NOT for reminder injection.
+- **Agent hooks** (`type: agent`): Spawn a subagent with Read/Grep/Glob-style tools to verify a condition before returning a decision. Best for complex checks that need to inspect files.
 
-**Tool lifecycle:**
-- `PreToolUse` — Before any tool runs. Can approve, deny, defer, or modify tool calls. Highest-priority control mechanism in the stack. Supports "defer" for headless sessions (pause and resume later with `-p --resume`).
-- `PostToolUse` — After tool completes successfully. Good for formatting, logging, notifications.
-- `PostToolUseFailure` — After a tool call fails. Good for error recovery, fallback strategies.
+### Hook matcher and filtering
 
-**Agent lifecycle:**
-- `SubagentStart` — When a subagent spawns. Good for logging, resource allocation.
-- `SubagentStop` — When a subagent finishes. Good for cleanup, result validation.
-- `Stop` — When the main agent finishes. Good for final validation, cleanup.
+> **Official:** The `matcher` field's evaluation depends on its contents: `"*"`/`""`/omitted matches all; letters/digits/`_`/`|` only → exact string or `|`-list; anything else → JavaScript regex (e.g., `mcp__memory__.*`, `^Notebook`). The matched field varies by event (tool name for tool events, session source for `SessionStart`, agent type for `SubagentStart`, etc.).
 
-**Task and team:**
-- `TaskCompleted` — When a task is marked complete. Blocking — can trigger follow-up actions.
-- `TeammateIdle` — When an agent team member becomes idle. Good for reassigning work.
+For fine-grained tool-call filtering, prefer the declarative `if` field over reparsing stdin inside the script. `if` uses permission-rule syntax:
 
-**Context management:**
-- `PreCompact` — Before compaction. Good for injecting reminders that must survive compaction.
-- `PostCompact` (Observed) — After compaction completes. Good for verifying critical context survived.
-- `Notification` — For injecting context after events like compaction or other system events.
+```yaml
+- matcher: "Bash"
+  hooks:
+    - type: command
+      if: "Bash(git push *)"
+      command: "./scripts/require-approval.sh"
+```
 
-**Other observed events:**
-- `TaskCreated` (Observed) — When a new task is created. Useful for logging and routing.
-- `ConfigChange` (Observed) — When configuration changes at runtime. Useful for dynamic reconfiguration.
-
-> **Note:** The event surface may expand over time. Check the official Claude Code documentation for the latest list.
-
-### Hook types
-- **Command hooks:** Execute shell scripts. Best for local validation and formatting. Receive hook input as JSON via stdin.
-- **HTTP hooks:** Call external services. Best for CI/CD integration, external APIs.
-- **Prompt hooks:** Modify Claude's behavior without external processes. Best for context injection and reminders.
-
-### Hook matcher
-
-> **Official:** The `matcher` field targets **tool names** (e.g., `"Bash"`, `"Write"`, `"Edit|Write"`). For finer filtering (e.g., blocking specific shell commands), parse the stdin JSON inside the hook script and apply conditional logic there.
+This avoids spawning the script when the filter doesn't match. `if` is only evaluated on tool events.
 
 ### Hook priority
-PreToolUse hooks override the permission system entirely — they are the highest-priority control mechanism. A PreToolUse hook returning deny will block a tool call even if permissions explicitly allow it.
+PreToolUse hooks override the permission system entirely — they are the highest-priority control mechanism. A PreToolUse hook returning `hookSpecificOutput.permissionDecision: "deny"` (or the deprecated top-level `decision: "block"`, or exit code 2) blocks a tool call even if permissions explicitly allow it.
 
 ## Plugins: shareable harness packages
 
@@ -313,11 +300,13 @@ plugin-name/
 
 > **Official**
 
-Agent teams coordinate multiple Claude Code instances working simultaneously. One session acts as team lead; teammates work independently in their own context windows and communicate via a shared task list and mailbox system.
+Agent teams coordinate multiple Claude Code instances working simultaneously. One session acts as team lead; teammates work independently in their own context windows and communicate directly via a shared task list and mailbox.
+
+Agent teams require Claude Code v2.1.32+ and are experimental — enable via `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`.
 
 ### When to use agent teams vs. subagents
-- **Subagents:** Quick, focused workers that report back to a single parent. No inter-worker communication.
-- **Agent teams:** Workers that need to share findings, challenge each other, and coordinate independently. Each has its own full context window.
+- **Subagents:** Quick, focused workers that report back to a single parent. No inter-worker communication. Lower token cost.
+- **Agent teams:** Workers that need to share findings, challenge each other, and coordinate independently. Each has its own full context window. Higher token cost that scales linearly with team size.
 
 ### Best use cases for agent teams
 - Research and review: multiple teammates investigate different aspects simultaneously
@@ -326,20 +315,69 @@ Agent teams coordinate multiple Claude Code instances working simultaneously. On
 - Cross-layer coordination: changes spanning frontend, backend, and tests
 
 ### Practical guidelines
-- 2-3 focused teammates consistently outperform larger teams
-- Beyond 4-5 active agents, coordination overhead exceeds productivity gains
-- Agent teams use ~7x the tokens of a single session in plan mode (Anthropic's cost documentation)
-- File system serves as the primary coordination mechanism
-- Git synchronization prevents two agents from working on the same task
-- **Delegate mode** (Shift+Tab): Restricts the lead agent's tools to spawning teammates, sending messages, managing task list, and shutting down teammates. Prevents the lead from implementing tasks itself. This is the correct mode for team coordination.
-- Known limitations: No session resumption for in-process teammates, one team per session, no nested teams.
-- Communication via inbox-based messaging system — teammates are peers, not hierarchical workers.
+
+> **Official recommendations (Anthropic):**
+
+- **Start with 3–5 teammates** for most workflows. Beyond 5–6, coordination overhead exceeds productivity gains.
+- Aim for 5–6 tasks per teammate — enough work to avoid idle time, few enough to keep context manageable.
+- Token usage scales linearly with active teammates: each teammate is a full Claude Code instance with its own context window.
+- File system serves as the primary coordination mechanism. Give each teammate distinct files to avoid write conflicts.
+- Communication happens via inbox-based messaging — teammates are peers, not hierarchical workers.
+
+### Preventing the lead from doing the work itself
+
+A common failure mode is the lead agent starting to implement tasks instead of delegating. Two correct mechanisms (no special keyboard shortcut exists):
+
+1. **Declarative tool restriction** — when running the lead with `claude --agent <n>`, limit its tools to the Agent tool and coordination helpers:
+
+   ```yaml
+   # In the lead agent's frontmatter
+   tools: Agent(worker, researcher, reviewer), Read, Bash
+   ```
+
+   `Agent(a, b, c)` is an allowlist of subagent types the lead may spawn. Omitting `Agent` entirely prevents spawning. `SendMessage` and task-management tools are always available to the lead regardless of `tools`.
+
+2. **Natural-language steering** — if you notice the lead implementing, tell it:
+
+   ```
+   Wait for your teammates to complete their tasks before proceeding.
+   ```
+
+### Display modes
+
+| Mode | Where teammates appear | When to use |
+|------|------------------------|-------------|
+| `in-process` (default outside tmux) | All teammates in the main terminal | Any terminal, no setup |
+| `tmux` / split-pane | Each teammate in its own pane | Requires tmux or iTerm2 with `it2` CLI |
+| `auto` (default) | Split-pane inside tmux, else in-process | — |
+
+Set via `teammateMode` in `~/.claude.json`, or the `--teammate-mode` CLI flag. In in-process mode, **Shift+Down** cycles through teammates.
+
+### Quality gates via hooks
+
+Use these hooks to enforce quality before teammates stop or tasks close:
+- `TeammateIdle` — exit 2 keeps the teammate working with feedback
+- `TaskCreated` — exit 2 rolls back task creation
+- `TaskCompleted` — exit 2 prevents completion (e.g., if tests fail)
+
+### Known limitations
+
+- No session resumption for in-process teammates (`/resume` / `/rewind`)
+- Task status can lag; teammates sometimes fail to mark completed
+- One team per session; no nested teams
+- Lead is fixed for the team's lifetime (no leadership transfer)
+- All teammates share the lead's permission mode at spawn
 
 ### Enabling agent teams
+
 ```bash
 export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 ```
-Or add to `.claude/settings.json`.
+
+Or in `.claude/settings.json`:
+```json
+{ "env": { "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1" } }
+```
 
 ## Architecture decision guide
 

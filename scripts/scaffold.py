@@ -13,10 +13,12 @@ Options:
     --hooks                 Add hooks template to settings.json
     --evaluator             Add an evaluator agent for independent QA
     --plugin                Package as a plugin (adds manifest)
-    --model MODEL           Default model for agents (sonnet/opus/haiku, default: sonnet)
-    --memory SCOPE          Enable persistent memory (user/project/local/none, default: none)
+    --model MODEL           Default model for agents. One of: inherit (default),
+                            sonnet, opus, haiku, or a full model ID. `inherit`
+                            matches the main conversation's model.
+    --memory SCOPE          Enable persistent memory scope (user/project/local/none, default: none)
     --background            Enable background execution for agents
-    --teams                 Add agent teams configuration
+    --teams                 Add agent teams configuration (ignored with --plugin)
 
 Examples:
     python3 scaffold.py research-agent ./output --agents planner,researcher,writer --skills deep-research --commands research --rules citations
@@ -44,6 +46,27 @@ def write_file(path: str, content: str):
 
 def scaffold(args):
     base = os.path.join(args.output_dir, args.project_name)
+
+    # Warn about silently-ignored flag combinations
+    warnings = []
+    if args.plugin and args.teams:
+        warnings.append(
+            "--teams is ignored with --plugin. Agent teams require a settings.json "
+            "env var (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1), which plugins do not provide. "
+            "Enable teams at the project level after installing the plugin."
+        )
+    if args.plugin and args.evaluator:
+        warnings.append(
+            "Plugin subagents do NOT support `hooks`, `mcpServers`, or `permissionMode`. "
+            "The evaluator agent is being generated inside a plugin, so its MCP-based "
+            "runtime testing (e.g. Playwright) will not work. Either move the evaluator "
+            "out of the plugin into .claude/agents/, or restrict it to shell-based testing."
+        )
+    if args.plugin and args.hooks:
+        # Plugin hooks go in hooks/hooks.json; fine, but no rules/ dir exists in plugins
+        pass
+    for w in warnings:
+        print(f"WARNING: {w}")
 
     if args.plugin:
         # Plugin structure
@@ -131,8 +154,16 @@ Update `progress.json` after each completed task. Use subagents to isolate long 
 
     if args.hooks and not args.plugin:
         # Hook exit codes: 0 = allow, 1 = warn (not blocked), 2 = block
-        # matcher targets tool names; finer filtering done inside the script
-        # Hook commands receive input as JSON via stdin (not $FILE env var)
+        # Exit 2 blocks only for events that support blocking (PreToolUse,
+        # UserPromptSubmit, Stop, PreCompact, TaskCreated, TaskCompleted, etc.).
+        # For PostToolUse, Notification, SessionStart, and similar non-blocking
+        # events, exit 2 just surfaces stderr to Claude or the user.
+        #
+        # `matcher` targets tool names; for finer filtering prefer the
+        # declarative `if` field (permission-rule syntax) over reparsing
+        # stdin inside the script.
+        #
+        # Hook commands receive input as JSON via stdin (not $FILE env var).
         settings["hooks"] = {
             "PreToolUse": [
                 {
@@ -140,7 +171,8 @@ Update `progress.json` after each completed task. Use subagents to isolate long 
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "input=$(cat); cmd=$(echo \"$input\" | jq -r '.tool_input.command // empty'); if echo \"$cmd\" | grep -qE '^rm\\s+-rf'; then echo 'Destructive rm -rf blocked' >&2; exit 2; fi; exit 0"
+                            "if": "Bash(rm -rf *)",
+                            "command": "echo 'Destructive rm -rf blocked' >&2; exit 2"
                         }
                     ]
                 }
@@ -151,7 +183,7 @@ Update `progress.json` after each completed task. Use subagents to isolate long 
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "input=$(cat); file=$(echo \"$input\" | jq -r '.tool_input.file_path // empty'); if [ -n \"$file\" ]; then echo \"File modified: $file\"; fi"
+                            "command": "input=$(cat); file=$(echo \"$input\" | jq -r '.tool_input.file_path // empty'); if [ -n \"$file\" ]; then echo \"File modified: $file\" >&2; fi"
                         }
                     ]
                 }
@@ -161,35 +193,30 @@ Update `progress.json` after each completed task. Use subagents to isolate long 
                     "matcher": "Bash",
                     "hooks": [
                         {
-                            "type": "prompt",
-                            "prompt": "The previous command failed. Check the error and try a different approach."
+                            "type": "command",
+                            "command": "jq -n '{hookSpecificOutput:{hookEventName:\"PostToolUseFailure\",additionalContext:\"The previous command failed. Check the error output and try a different approach.\"}}'"
                         }
                     ]
                 }
             ],
-            "PreCompact": [
+            "SessionStart": [
                 {
-                    "matcher": "",
+                    "matcher": "startup|resume|clear|compact",
                     "hooks": [
                         {
-                            "type": "prompt",
-                            "prompt": "Before compaction: save critical decisions and current task state to progress.json."
-                        }
-                    ]
-                }
-            ],
-            "Notification": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "prompt",
-                            "prompt": "Reminder: read progress.json before starting work. Work on ONE task at a time."
+                            "type": "command",
+                            "command": "echo 'Reminder: read progress.json before starting work. Work on ONE task at a time.'"
                         }
                     ]
                 }
             ]
         }
+
+    # Agent teams env var must be set before writing settings.json
+    if args.teams and not args.plugin:
+        if "env" not in settings:
+            settings["env"] = {}
+        settings["env"]["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"] = "1"
 
     if not args.plugin:
         write_file(os.path.join(base, ".claude", "settings.json"), json.dumps(settings, indent=2))
@@ -216,10 +243,10 @@ Update `progress.json` after each completed task. Use subagents to isolate long 
         write_file(os.path.join(base, "scripts", "validate.sh"), """#!/bin/bash
 # Validation hook - customize this script
 # Hook input is received as JSON via stdin
-# Exit 0 = allow, Exit 1 = warn (not blocked), Exit 2 = block
+# Exit 0 = allow, Exit 1 = warn (not blocked), Exit 2 = block (PreToolUse only)
 input=$(cat)
 file=$(echo "$input" | jq -r '.tool_input.file_path // empty')
-echo "Validating: $file"
+echo "Validating: $file" >&2
 exit 0
 """)
 
@@ -238,15 +265,8 @@ exit 0
             "updated_at": ""
         }, indent=2))
 
-    # Agent teams configuration (standard harness only)
+    # Append agent teams guide to CLAUDE.md
     if args.teams and not args.plugin:
-        # Add agent teams env var to settings
-        if "env" not in settings:
-            settings["env"] = {}
-        settings["env"]["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"] = "1"
-        # Rewrite settings.json with the env var
-        write_file(os.path.join(base, ".claude", "settings.json"), json.dumps(settings, indent=2))
-        # Add a teams guide to CLAUDE.md context management section
         claude_md_path = os.path.join(base, "CLAUDE.md")
         if os.path.exists(claude_md_path):
             with open(claude_md_path, "r") as f:
@@ -254,11 +274,16 @@ exit 0
             content += """
 ## Agent teams
 
-Agent teams are enabled. Use Shift+Tab (Delegate mode) to restrict the lead agent to coordination only.
-- 2-3 focused teammates outperform larger teams
-- Each teammate works in its own context window
-- Communication via inbox-based messaging
-- Use teams when tasks have clear file boundaries for parallel work
+Agent teams are enabled via `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in settings.json.
+
+- Start with 3-5 teammates for most workflows (Anthropic's recommendation).
+- Each teammate has its own context window; the lead does not inherit teammate conversations.
+- Shift+Down cycles through teammates in in-process mode; click a pane in split-pane mode.
+- To prevent the lead from implementing tasks itself, restrict its tools declaratively:
+  `tools: Agent(teammate_a, teammate_b), Read, Bash` — or tell the lead in natural language:
+  "Wait for your teammates to complete their tasks before proceeding."
+- Use `TeammateIdle`, `TaskCreated`, and `TaskCompleted` hooks as quality gates.
+- Limitations: one team per session, no nested teams, no session resumption for in-process teammates.
 """
             write_file(claude_md_path, content)
 
@@ -270,7 +295,7 @@ Agent teams are enabled. Use Shift+Tab (Delegate mode) to restrict the lead agen
             write_file(os.path.join(component_path("agents"), f"{agent}.md"), f"""---
 name: {agent}
 description: {{When this agent should be invoked. Include specific trigger phrases.}}
-tools: Read, Write, Grep, Glob
+tools: Read, Grep, Glob
 model: {args.model}{memory_line}{background_line}
 ---
 
@@ -290,16 +315,32 @@ You are a {agent.replace('-', ' ')} specialist.
 
 - {{Rule 1}}
 - {{Rule 2}}
+
+<!-- NOTE on tools: This stub uses least-privilege (Read, Grep, Glob).
+     Add Write/Edit only if this agent needs to modify files.
+     Add Bash only if it needs to run commands.
+     Add WebSearch/WebFetch only if it needs web access. -->
 """)
 
     # Evaluator agent
     if args.evaluator:
+        # NOTE: plugin subagents cannot use `mcpServers`. If packaging as a
+        # plugin, the evaluator must rely on the session's existing MCP config
+        # or use shell-based testing (curl, headless browsers) instead.
+        mcp_block = ""
+        if not args.plugin:
+            mcp_block = """mcpServers:
+  - playwright:
+      type: stdio
+      command: npx
+      args: [\"-y\", \"@playwright/mcp@latest\"]
+"""
         write_file(os.path.join(component_path("agents"), "evaluator.md"), f"""---
 name: evaluator
 description: Independently test and grade completed work by interacting with the running output. Invoke after a feature is implemented, or when QA, evaluation, or testing is needed.
 tools: Read, Grep, Glob, Bash
-model: {args.model if args.model == 'opus' else 'opus'}
----
+model: opus
+{mcp_block}---
 
 You are an independent QA specialist. Test the running application as a real user would.
 
@@ -452,8 +493,8 @@ def main():
     parser.add_argument("--hooks", help="Add hooks template", action="store_true")
     parser.add_argument("--evaluator", help="Add evaluator agent for independent QA", action="store_true")
     parser.add_argument("--plugin", help="Package as a plugin", action="store_true")
-    parser.add_argument("--model", help="Default model for agents (sonnet/opus/haiku/opusplan)", default="sonnet",
-                        choices=["sonnet", "opus", "haiku", "opusplan"])
+    parser.add_argument("--model", help="Default model for agents. `inherit` (default) uses the main conversation's model. Other aliases: sonnet, opus, haiku. Full model IDs (e.g. claude-opus-4-7) are also accepted by Claude Code but not validated here.", default="inherit",
+                        choices=["inherit", "sonnet", "opus", "haiku"])
     parser.add_argument("--memory", help="Persistent memory scope (user/project/local/none)", default="none",
                         choices=["user", "project", "local", "none"])
     parser.add_argument("--background", help="Enable background execution for agents", action="store_true")

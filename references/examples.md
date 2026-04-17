@@ -238,6 +238,11 @@ name: evaluator
 description: Independently test and grade completed features by interacting with the running application. Invoke after implementer finishes a feature, or when the orchestrator asks to "QA", "evaluate", "test the build", or "grade the sprint".
 tools: Read, Grep, Glob, Bash
 model: opus
+mcpServers:
+  - playwright:
+      type: stdio
+      command: npx
+      args: ["-y", "@playwright/mcp@latest"]
 ---
 You are an independent QA specialist. Test the running application as a real user would.
 
@@ -245,7 +250,7 @@ You are an independent QA specialist. Test the running application as a real use
 1. Read the sprint contract from sprint-contract-{n}.md
 2. Start the application via init.sh
 3. For each test criterion in the contract:
-   a. Interact with the running application
+   a. Interact with the running application via Playwright MCP (navigate, click, fill forms, screenshot)
    b. Verify the expected behavior occurs
    c. Score the criterion 1-10
 4. Write findings to qa-report-{n}.md
@@ -266,9 +271,11 @@ If ANY criterion falls below its threshold, the sprint FAILS.
 - Distinguish between bugs (FAIL) and polish items (note but pass).
 ```
 
+> **If you package this harness as a plugin:** `mcpServers` is silently ignored in plugin subagents. Move the evaluator to `.claude/agents/` outside the plugin, or restrict it to shell-based testing (curl, headless browsers from Bash).
+
 ### ✅ Hooks in settings.json
 
-> **Official:** Hook exit codes: `0` = allow, `1` = warning (logged, not blocked), `2` = block the action. The `matcher` field targets **tool names** (e.g., `"Bash"`, `"Write"`, `"Edit|Write"`). Use conditional logic inside the hook script for finer command-level filtering. Hook commands receive input as **JSON via stdin**.
+> **Official:** Hook exit codes: `0` = allow, `1` = warning (logged, not blocked), `2` = block (for events that support blocking — check the per-event table in `file-templates.md` §Hooks). The `matcher` field targets **tool names**; use the declarative `if` field or stdin parsing for finer filtering. Hook commands receive input as **JSON via stdin**.
 
 ```json
 {
@@ -279,7 +286,8 @@ If ANY criterion falls below its threshold, the sprint FAILS.
         "hooks": [
           {
             "type": "command",
-            "command": "input=$(cat); cmd=$(echo \"$input\" | jq -r '.tool_input.command // empty'); if echo \"$cmd\" | grep -qE '^rm\\s+-rf\\s'; then echo 'Destructive rm -rf blocked' >&2; exit 2; fi; exit 0"
+            "if": "Bash(rm -rf *)",
+            "command": "echo 'Destructive rm -rf blocked' >&2; exit 2"
           }
         ]
       }
@@ -300,19 +308,29 @@ If ANY criterion falls below its threshold, the sprint FAILS.
         "matcher": "Bash",
         "hooks": [
           {
-            "type": "prompt",
-            "prompt": "The previous command failed. Check the error output and try a different approach."
+            "type": "command",
+            "command": "jq -n '{hookSpecificOutput:{hookEventName:\"PostToolUseFailure\",additionalContext:\"The previous command failed. Check the error output and try a different approach.\"}}'"
           }
         ]
       }
     ],
-    "Notification": [
+    "SessionStart": [
       {
-        "matcher": "",
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
-            "type": "prompt",
-            "prompt": "Reminder: read dev-progress.json and feature-list.json before starting work. Work on ONE feature at a time. Commit after each feature."
+            "type": "command",
+            "command": "echo 'Read dev-progress.json and feature-list.json before starting work. Work on ONE feature at a time. Commit after each feature.'"
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npm test --silent >&2 || { echo 'Tests failing — task cannot be marked complete' >&2; exit 2; }"
           }
         ]
       }
@@ -320,6 +338,10 @@ If ANY criterion falls below its threshold, the sprint FAILS.
   }
 }
 ```
+
+> **Why `SessionStart` for reminders, not `Notification` or `PreCompact`:** `SessionStart` with matcher `compact` fires after auto-compaction when the session resumes, so its stdout automatically re-enters Claude's context. `PreCompact` can only block compaction (no context injection), and `Notification` fires on system events (permission prompts, idle prompts) unrelated to turn start. Putting reminders in `SessionStart` is the correct "survives compaction" pattern.
+>
+> **Why `type: command` with JSON output instead of `type: prompt`:** `type: "prompt"` sends a prompt to a fresh model for a yes/no decision and expects a JSON response back — it's for quality gates that need reasoning. Using it for reminder text is a misuse that will not work as intended. For context injection, print to stdout (SessionStart/UserPromptSubmit) or emit `{"hookSpecificOutput": {"additionalContext": "..."}}` on events that accept it.
 
 ### ✅ Feature list format (JSON, not Markdown)
 ```json

@@ -7,86 +7,88 @@ description: Design and generate complete Harness structures for Claude Code age
 
 Design and generate production-ready Harness structures for Claude Code agents.
 
-> **About this skill:** This skill combines **Anthropic's official documentation**, the author's **interpretation** of Anthropic patterns, and **scaffold examples** that demonstrate these patterns in practice. Each reference file marks which content is official and which is interpretation. When in doubt, defer to the official Claude Code documentation.
+## What this skill is (and isn't)
 
-## What this skill does
+This skill is a **skeleton generator + reference library**. It produces a `.claude/` directory structure with placeholder-filled templates that the user must hand-edit to finalize. It does NOT auto-write a production CLAUDE.md from scratch — Anthropic's guidance is that hand-crafted CLAUDE.md files outperform fully auto-generated ones, so the scaffold deliberately leaves `{placeholder}` values for the user to fill in.
 
-Take a user's task description and produce a complete `.claude/` directory structure with all necessary files: `CLAUDE.md`, subagents, skills, commands, rules, hooks, plugin manifests, settings, and progress tracking. Every output follows Anthropic's published best practices for harness engineering and context engineering (updated April 2026).
+> **About this skill's sources:** Content is drawn from Anthropic's Claude Code documentation (verified April 2026). Where the author made inferences or chose conventions not spelled out by Anthropic, references are labeled `Interpretation` or `Optional Practice`. When documentation conflicts with a reference file here, defer to the official Claude Code docs.
 
 ## Core workflow
 
-1. **Understand the task** — Ask clarifying questions if the scope, audience, or constraints are unclear. Determine what the agent should produce, what information it needs, what actions it should take, and what rules it must follow.
+1. **Understand the task.** Determine what the agent should produce, what information it needs, what actions it takes, and what rules it must follow. Ask clarifying questions if scope is unclear.
 
-2. **Read references** — Before generating any files, read the reference files bundled with this skill:
-   - `references/harness-principles.md` — Anthropic's harness engineering principles
-   - `references/context-engineering.md` — Context engineering best practices
-   - `references/file-templates.md` — Templates for every file type
-   - `references/examples.md` — Complete worked examples
+2. **Read ONLY the references you need.** The reference files total ~1,800 lines — do not load them all. Use this routing:
 
-3. **Design the architecture** — Decide which components are needed:
-   - How many subagents? What are their specializations?
-   - What frontmatter fields does each subagent need? (tools, model, hooks, memory, effort, isolation, skills, maxTurns)
-   - What skills should be bundled? What references and scripts do they need?
+   | User's request involves | Read |
+   |-------------------------|------|
+   | Architecture decisions (how many agents? evaluator? teams?) | `references/harness-principles.md` |
+   | CLAUDE.md content, skill design, context budget | `references/context-engineering.md` |
+   | Writing any specific file (frontmatter, hooks, settings.json) | `references/file-templates.md` |
+   | Seeing complete worked harnesses at different complexity | `references/examples.md` |
+   | Plugin packaging | `file-templates.md` §Plugin + `examples.md` Example 4 |
+   | Agent teams | `harness-principles.md` §Agent teams |
+   | Hook events, exit codes, matchers | `file-templates.md` §Hooks (single source of truth) |
+
+3. **Design the architecture.** Start with the simplest structure (single agent + rich CLAUDE.md) and add components only when the current structure fails without them. Key decisions:
+   - How many subagents, and what's each one's specialty?
+   - Which frontmatter fields does each subagent need? (see `file-templates.md` for the 17-field table)
+   - What skills should be bundled? What references/scripts do they need?
    - What slash commands serve as entry points?
-   - What rules apply to which file patterns?
-   - What hooks enforce deterministic constraints? (Choose from the full set of hook events — see `references/file-templates.md` for the event table)
-   - Should this be packaged as a plugin for sharing? (Note: plugin subagents cannot use hooks, mcpServers, or permissionMode)
-   - Does the task warrant agent teams for parallel work? (Consider delegate mode and token cost ~7x)
-   - What format should progress tracking use?
-   - Is Claude Agent SDK-based orchestration more appropriate than `.claude/` structure?
+   - What rules apply to which file patterns (glob-scoped)?
+   - What hooks enforce deterministic constraints that CLAUDE.md cannot guarantee?
+   - Plugin packaging? (If yes: no `hooks`/`mcpServers`/`permissionMode` in subagents)
+   - Agent teams? (Higher token cost, needs `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`)
+   - Claude Agent SDK orchestration more appropriate than `.claude/` for this use case?
 
-4. **Generate all files** — Create every file with proper content. Use the templates from `references/file-templates.md` as starting points, then customize for the specific task. Ensure all hook scripts read input from **stdin as JSON** (not environment variables).
+4. **Generate the files.** Either use `scripts/scaffold.py` for a quick skeleton, or hand-write from templates in `file-templates.md`. Customize placeholders for the specific task. Hook scripts MUST read input from **stdin as JSON** (not `$FILE` env vars).
 
-5. **Package and deliver** — Organize into a clean directory, create a ZIP, and present to the user with an architecture diagram and usage instructions.
+5. **Package and deliver.** Organize into a clean directory, ZIP if the user wants a shareable artifact, and present with an architecture diagram and usage notes.
 
-## Architecture decision framework
+## Key design principles
 
-Read `references/harness-principles.md` for the full decision framework. Key rules:
+Read `references/harness-principles.md` for the full framework. The rules that prevent the most common mistakes:
 
-- Start with the simplest possible structure. Single agent with rich context beats multi-agent complexity.
-- Every component encodes an assumption about what the model cannot do alone. Stress-test those assumptions as models improve.
-- Add subagents only when context isolation or tool restriction is genuinely needed.
-- Add an evaluator agent when self-evaluation fails (subjective tasks, complex QA). The planner / generator / evaluator pattern is a recommended approach, not a mandatory structure.
-- Every file in CLAUDE.md must pass the test: "Would Claude make a mistake without this line?"
-- Skills over system prompt. Move specialized knowledge to skills so it loads on demand.
-- Rules over CLAUDE.md. Move file-specific constraints to glob-scoped rules.
-- Hooks over CLAUDE.md for hard requirements. CLAUDE.md is advisory (~80% compliance); hooks are deterministic (100%).
-- JSON for state tracking. Models treat JSON as code and modify it more carefully than Markdown.
-- Consider plugin packaging when the harness should be shared across projects or teams.
+- **Simplest wins.** Single agent with rich context beats multi-agent complexity. Every component encodes an assumption about what the model cannot do alone — stress-test those assumptions as models improve.
+- **Skills over system prompt.** Move specialized knowledge to skills so it loads on demand.
+- **Rules over CLAUDE.md.** Move file-specific constraints to glob-scoped rules.
+- **Hooks over CLAUDE.md for hard requirements.** CLAUDE.md is advisory (~80% compliance); hooks are deterministic (100%). Use `SessionStart` with `matcher: "compact"` for reminders that must survive compaction.
+- **JSON for state tracking.** Models treat JSON as code and modify it more carefully than Markdown.
+- **`type: "prompt"` hooks are for yes/no model decisions, NOT reminder injection.** Using them as reminders is a subtle bug that won't do what you expect.
 
 ## Output structure
 
-Every harness must include at minimum:
+Every harness includes at minimum:
 
 ```
 project-name/
-├── CLAUDE.md                     # Always. Under 200 lines.
+├── CLAUDE.md                     # Always. Under 200 lines. Hand-edit required.
 ├── .claude/
-│   ├── settings.json             # Permissions and tool config
+│   ├── settings.json             # Permissions, hooks, env
 │   └── [components as needed]
 └── [working directories]
 ```
 
-Scale up from there based on task complexity. Read `references/file-templates.md` for the template of each component type.
+Scale up based on task complexity — see the calibration table in `references/examples.md` §Complexity calibration guide.
 
-## Quality checklist (run before delivery)
+## Pre-delivery checklist (10 items)
 
-1. CLAUDE.md is under 200 lines and every line would prevent a mistake if removed
-2. All skill descriptions are "pushy" — they list specific trigger phrases
-3. Skill SKILL.md files are under 500 lines; detailed knowledge is in references/
-4. Subagent tool access follows least privilege (read-only agents get read-only tools)
-5. Subagent frontmatter uses only supported fields (name, description, tools, disallowedTools, model, permissionMode, mcpServers, hooks, maxTurns, skills, initialPrompt, memory, effort, background, isolation, color)
-6. Subagent `memory` scope is chosen intentionally (`user`, `project`, or `local`)
-7. Rules use glob patterns that match the correct directories
-8. No duplicate instructions across CLAUDE.md, skills, and rules
-9. Progress tracking file uses JSON, not Markdown
-10. Working directories exist with .gitkeep files
-11. Hooks enforce hard requirements (linting, security, formatting) that CLAUDE.md cannot guarantee
-12. Hook exit codes are correct: 0 = allow, 1 = warning (not blocked), 2 = block
-13. Hook scripts read input from **stdin as JSON** (not `$FILE` environment variables)
-14. Hook `matcher` targets tool names (e.g., `"Bash"`, `"Write"`); finer filtering is done inside the script
-15. If packaged as plugin: manifest is valid, skills are namespaced, hooks use `${CLAUDE_PLUGIN_ROOT}`, subagents do NOT use hooks/mcpServers/permissionMode
-16. An architecture diagram or README explains the structure
-17. The harness follows the principle: "find the simplest solution possible"
-18. The harness has been stress-tested: would removing any component cause failures? Would the current model handle any component's job without it?
-19. Model-specific considerations documented: does this harness assume context resets (Sonnet 4.5) or auto-compaction (Opus 4.6)?
+1. CLAUDE.md is under 200 lines; every line would prevent a mistake if removed
+2. Skill descriptions are "pushy" — they list specific trigger phrases
+3. Subagent tool access follows least privilege; `model` defaults to `inherit` unless there's a reason to override
+4. Subagent frontmatter uses only supported fields (17 documented — see `file-templates.md` §frontmatter)
+5. Progress tracking uses JSON, not Markdown
+6. Hooks read input from **stdin as JSON**; prefer `if` for declarative filtering; `type: "prompt"` used only for yes/no model decisions
+7. PreToolUse hooks use modern `hookSpecificOutput.permissionDecision` for blocking (exit 2 still works but is less expressive)
+8. Reminders that must survive compaction live in `SessionStart` with `matcher: "compact"`, not in `PreCompact` or `type: prompt` hooks
+9. If plugin: subagents have NO `hooks`/`mcpServers`/`permissionMode`; hook paths use `${CLAUDE_PLUGIN_ROOT}`
+10. Each component passes the stress test: would removing it cause a specific failure? If the current model could handle it alone, remove the component
+
+## Known false claims to avoid
+
+Things people say about Claude Code that are **not true** in the current docs — do not include these in generated harnesses:
+
+- "Shift+Tab toggles Delegate mode" — no such shortcut exists. The correct way to prevent the lead from implementing tasks is `tools: Agent(worker_a, worker_b), Read, Bash` in the lead's frontmatter, or a natural-language instruction.
+- "`type: prompt` hooks inject reminders" — they send a prompt to a fresh model for yes/no decisions.
+- "Exit code 2 always blocks" — it only blocks for certain events. `PostToolUse`, `Notification`, `SubagentStart`, `SessionStart/End`, `CwdChanged`, `FileChanged`, `PostCompact`, `StopFailure`, `PermissionDenied` do NOT block on exit 2.
+- "Agent teams recommend 2-3 teammates" — Anthropic recommends 3-5.
+- "`opusplan` is a valid subagent `model` value" — it's a valid `/model` CLI alias, but subagent frontmatter documentation only explicitly lists `sonnet`/`opus`/`haiku`/`inherit`/full model IDs.

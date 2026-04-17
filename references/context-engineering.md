@@ -163,7 +163,7 @@ Write "Do X" or "To accomplish X, do Y" — not "You should do X."
 > **Official**
 
 ### System prompt
-The subagent's system prompt replaces the default Claude Code system prompt entirely. It should include:
+The subagent's system prompt replaces the default Claude Code system prompt entirely. Subagents receive only this prompt plus basic environment details (no full Claude Code system prompt). It should include:
 - Role definition
 - Specific process to follow
 - Output format
@@ -176,11 +176,23 @@ The only channel from parent to subagent is the Agent tool's prompt string. Incl
 - Enough context to work independently
 
 ### Tool restriction
-Apply least privilege:
-- Read-only agents: Read, Grep, Glob
-- Research agents: Read, Grep, Glob, WebFetch, WebSearch
-- Write agents: Read, Write, Edit, Bash
-- Full agents: All tools (use sparingly)
+Apply least privilege. Two mechanisms exist:
+
+- `tools:` is an **allowlist**. Omitting it inherits all tools.
+- `disallowedTools:` is a **denylist** applied before `tools`. Use it to inherit most tools but drop a few.
+
+Common presets:
+- Read-only agents: `tools: Read, Grep, Glob`
+- Research agents: `tools: Read, Grep, Glob, WebFetch, WebSearch`
+- Write agents: `tools: Read, Write, Edit, Bash`
+- Coordinator agents (main-thread only, via `claude --agent`): `tools: Agent(worker_a, worker_b), Read, Bash` — the `Agent(type)` syntax is an allowlist of subagent types the coordinator may spawn
+
+### Skills and MCP preloading
+- `skills:` injects full skill content into the subagent's context at startup. Subagents do NOT inherit skills from the parent conversation.
+- `mcpServers:` scopes MCP servers to the subagent — tool descriptions don't consume parent context. Not supported in plugin subagents.
+
+### Persistent memory
+`memory: user | project | local` gives the subagent a memory directory (`~/.claude/agent-memory/<n>/`, `.claude/agent-memory/<n>/`, or `.claude/agent-memory-local/<n>/`). Claude Code auto-injects the first 200 lines / 25KB of `MEMORY.md` into the subagent's system prompt, and auto-enables Read/Write/Edit tools for the memory directory. Prompt the subagent to consult and update its memory explicitly for best results.
 
 ## Context strategies for long-horizon tasks
 
@@ -306,5 +318,5 @@ Anthropic's experiments found models treat JSON as code and modify it more caref
 14. **Compaction without testing** — Overly aggressive compaction loses subtle but critical context; tune carefully on complex agent traces
 15. **Using hooks/mcpServers/permissionMode in plugin subagents** — Not supported; will fail silently or error (**Official**)
 16. **Hardcoding model-specific harness behavior** — Context resets needed for Sonnet 4.5 are unnecessary overhead on Opus 4.6; document which model the harness targets
-17. **Agent teams without delegate mode** — The lead agent will implement tasks itself instead of delegating; use Shift+Tab to restrict the lead's tools (**Official**)
+17. **Agent teams lead implementing tasks itself** — The lead will pick up work instead of delegating. Correct fixes: restrict its tools declaratively with `tools: Agent(worker_a, worker_b), Read, Bash` when running via `claude --agent`, or steer it with natural language ("Wait for your teammates to complete their tasks before proceeding"). **There is no Shift+Tab "Delegate mode" in Claude Code** — that shortcut does not exist. (**Official**)
 18. **Ignoring subagent memory scope** — Without persistent memory, subagents lose insights across conversations; set memory scope intentionally
